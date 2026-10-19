@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 from dotenv import load_dotenv
@@ -28,19 +29,30 @@ while True:
         ],
         "temperature": 0.2,
         "max_tokens": 2048,
-        "stream": False,
+        "stream": True,
     }
 
     try:
-        response = requests.post(
+        with requests.post(
             f"{base_url}/chat/completions",
             json=payload,
+            stream=True,
             timeout=(5, 300),
-        )
-        response.raise_for_status()
-        data = response.json()
-        text = data["choices"][0]["message"]["content"]
-        print(text)
+        ) as response:
+            response.raise_for_status()
+            testo = ""
+            for riga in response.iter_lines():
+                riga = riga.decode("utf-8")
+                if not riga.startswith("data: "):
+                    continue
+                dati = riga[len("data: "):]
+                if dati == "[DONE]":
+                    break
+                delta = json.loads(dati)["choices"][0]["delta"]
+                frammento = delta.get("content") or ""
+                print(frammento, end="", flush=True)
+                testo += frammento
+            print()
     except requests.exceptions.Timeout:
         print("Attesa scaduta: controllare server, carico e tempi.")
     except requests.exceptions.ConnectionError:
