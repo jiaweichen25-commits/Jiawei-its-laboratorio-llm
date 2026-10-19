@@ -17,7 +17,7 @@ payload = {
         {"role": "user", "content": QUESTION},
     ],
     "temperature": 0.2,
-    "max_tokens": 180,
+    "max_tokens": 2048,
     "stream": False,
 }
 
@@ -25,7 +25,7 @@ try:
     response = requests.post(
         f"{base_url}/chat/completions",
         json=payload,
-        timeout=(5, 120),
+        timeout=(5, 300),
     )
     response.raise_for_status()
     data = response.json()
