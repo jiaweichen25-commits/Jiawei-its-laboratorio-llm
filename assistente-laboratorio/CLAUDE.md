@@ -1,6 +1,6 @@
 # Assistente del laboratorio
 
-Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `its-laboratorio-llm/`; all'inizio contiene soltanto questo file. Struttura, dipendenze e comandi verranno definiti con la specifica e il piano.
+Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `assistente-laboratorio/`; all'inizio contiene soltanto questo file. Struttura, dipendenze e comandi verranno definiti con la specifica e il piano.
 
 ## Obiettivo
 
@@ -16,7 +16,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 
 - Implementare solo i requisiti concordati. Altri strumenti, MCP, workflow e RAG arriveranno nelle lezioni successive: non anticiparli.
 - Niente interfacce grafiche, servizi cloud o framework non concordati.
-- Lavorare solo dentro `its-laboratorio-llm/`. La repository contiene altre lezioni: non leggerle per copiarne il codice e non modificarle.
+- Lavorare solo dentro `assistente-laboratorio/`. La repository contiene altre lezioni: non leggerle per copiarne il codice e non modificarle.
 - Lavorare nel branch corrente; nessun branch o worktree nuovo se non richiesto.
 
 ## Scelte tecniche
@@ -33,7 +33,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 
 - Usare le skill di Superpowers per brainstorming, specifica, piano, implementazione e verifica.
 - Non scrivere codice prima che io abbia approvato la specifica e poi il piano.
-- Salvare specifica e piano in `its-laboratorio-llm/docs/superpowers/`.
+- Salvare specifica e piano in `assistente-laboratorio/docs/superpowers/`.
 - Procedere per incrementi piccoli, ciascuno verificato prima del commit.
 
 ## Test e verifiche
