@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from assistente.config import ErroreConfigurazione, carica_configurazione, verifica_modello
 from assistente.grafo import config_sessione, costruisci_grafo
 from assistente.modello import crea_modello, descrivi_errore
+from assistente.strumenti import crea_orologio
 from assistente.terminale import conversa
 
 
@@ -36,7 +37,12 @@ def main() -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    grafo = costruisci_grafo(crea_modello(cfg), cfg.fuso_predefinito, checkpointer=InMemorySaver())
+    grafo = costruisci_grafo(
+        crea_modello(cfg),
+        cfg.fuso_predefinito,
+        strumenti=[crea_orologio()],
+        checkpointer=InMemorySaver(),
+    )
     conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore)
     return 0
 

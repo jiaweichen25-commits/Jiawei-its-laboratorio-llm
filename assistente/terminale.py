@@ -43,7 +43,16 @@ def _annulla_turno(grafo, config, id_prima: set[str]) -> None:
         grafo.update_state(config, {"messages": [RemoveMessage(id=i) for i in nuovi]}, as_node="modello")
 
 
+def formatta_traccia(nome: str, args: dict, risultato: str) -> str:
+    argomenti = ", ".join(
+        f'{chiave}="{valore}"' if isinstance(valore, str) else f"{chiave}={valore!r}"
+        for chiave, valore in args.items()
+    )
+    return f"[strumento] {nome}({argomenti}) → {risultato}"
+
+
 def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
+    chiamate = {}  # tool_call_id → chiamata completa, dal messaggio del nodo modello
     for modo, dati in grafo.stream(
         {"messages": [HumanMessage(domanda)]}, config, stream_mode=["messages", "updates"]
     ):
@@ -51,6 +60,13 @@ def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
             frammento, meta = dati
             if meta.get("langgraph_node") == "modello" and isinstance(frammento.content, str) and frammento.content:
                 uscita.testo(frammento.content)
+        elif "modello" in dati:
+            for chiamata in getattr(dati["modello"]["messages"][-1], "tool_calls", []):
+                chiamate[chiamata["id"]] = chiamata
+        elif "strumenti" in dati:
+            for risultato in dati["strumenti"]["messages"]:
+                chiamata = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
+                uscita.riga(formatta_traccia(chiamata["name"], chiamata["args"], risultato.content))
     uscita.chiudi_riga()
 
 

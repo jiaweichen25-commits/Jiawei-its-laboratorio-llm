@@ -2,6 +2,7 @@ import io
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -12,7 +13,8 @@ from langgraph.errors import GraphRecursionError
 
 from assistente.grafo import config_sessione, costruisci_grafo
 from assistente.modello import descrivi_errore
-from assistente.terminale import conversa
+from assistente.strumenti import crea_orologio
+from assistente.terminale import conversa, formatta_traccia
 from tests.modello_finto import ModelloFinto
 
 
@@ -118,3 +120,22 @@ def test_output_cp1252():
     )
 
     assert esito.returncode == 0, esito.stderr
+
+
+def test_formatta_traccia():
+    assert formatta_traccia("orologio", {"fuso": "Asia/Tokyo"}, "X") == '[strumento] orologio(fuso="Asia/Tokyo") → X'
+
+
+def test_testo_poi_traccia():
+    chiamata = AIMessage("Controllo l'ora.", tool_calls=[
+        {"name": "orologio", "args": {"fuso": "Asia/Tokyo"}, "id": "c1"},
+    ])
+    modello = ModelloFinto(risposte=[chiamata, AIMessage("Sono le 00:42.")])
+    orologio = crea_orologio(lambda: datetime(2026, 10, 26, 15, 42, 10, tzinfo=timezone.utc))
+    grafo = costruisci_grafo(modello, "Europe/Rome", strumenti=[orologio], checkpointer=InMemorySaver())
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("Che ore sono a Tokyo?"), out)
+
+    traccia = '[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo)'
+    assert f"Controllo l'ora.\n{traccia}\nSono le 00:42." in out.getvalue()
