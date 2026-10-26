@@ -73,7 +73,7 @@ Variabili, tutte obbligatorie, lette con `load_dotenv(override=False)` (l'ambien
 
 Facoltativa: `LOG_LEVEL` (predefinito `INFO`).
 
-`.env.example` contiene queste variabili con valori di esempio, senza credenziali. `.env` è escluso da Git e dal contesto Docker. `.gitignore`: `.env`, `.venv/`, `__pycache__/`, `.pytest_cache/`. La chiave API richiesta da `ChatOpenAI` è il valore fisso `lm-studio`, ignorato da LM Studio.
+Il `.env` reale viene creato in locale con i valori di questa macchina (l'ID del modello è quello restituito da `GET /v1/models`) ed è l'unico file letto dall'applicazione. `.env.example`, versionato, contiene le stesse variabili con valori di esempio, senza credenziali, e serve a chi prepara l'ambiente da zero. `.env` è escluso da Git e dal contesto Docker. `.gitignore`: `.env`, `.venv/`, `__pycache__/`, `.pytest_cache/`. La chiave API richiesta da `ChatOpenAI` è il valore fisso `lm-studio`, ignorato da LM Studio.
 
 ### Controlli all'avvio (prima del primo prompt)
 
