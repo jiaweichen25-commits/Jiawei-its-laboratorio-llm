@@ -4,7 +4,7 @@ Data: 2026-10-26 · Lezione 4 · Stato: in revisione
 
 ## 1. Obiettivo
 
-Un'applicazione Python da terminale, in `assistente-laboratorio/`, che conversa con un modello locale servito da LM Studio sull'host. Il flusso è un grafo LangGraph esplicito; la cronologia vale per la sessione; il modello può richiedere uno strumento orologio che il programma esegue davvero; l'applicazione si avvia anche con Docker Compose.
+Un'applicazione Python da terminale, nella root della repository `its-laboratorio-llm/`, che conversa con un modello locale servito da LM Studio sull'host. Il flusso è un grafo LangGraph esplicito; la cronologia vale per la sessione; il modello può richiedere uno strumento orologio che il programma esegue davvero; l'applicazione si avvia anche con Docker Compose.
 
 Il progetto continuerà nelle lezioni successive (altri strumenti, MCP, workflow, RAG) estendendo questo codice e questo grafo.
 
@@ -22,12 +22,13 @@ Altri strumenti, MCP, workflow, RAG, interfacce grafiche o web, servizi cloud (c
 | Collegamento al modello | `langchain-openai` (`ChatOpenAI` verso LM Studio) | Lo streaming nel grafo e la ricomposizione delle chiamate agli strumenti sono già gestiti |
 | Grafo | `StateGraph` scritto a mano; niente `create_react_agent` né `ToolNode` | Stato, nodi e instradamento restano riconoscibili |
 | Cronologia | `InMemorySaver` con `thread_id` fisso | Solo memoria del processo: persa all'uscita |
-| Cartella | `assistente-laboratorio/` nella repository personale | Indicazione della lezione 4 (slide 18, 21) |
+| Cartella | Root della repository `its-laboratorio-llm/`, che fa le veci di `assistente-laboratorio/` delle slide; `Lezione3/` resta esclusa | Scelta dell'utente |
 
 ## 3. Struttura
 
 ```
-assistente-laboratorio/
+its-laboratorio-llm/
+├─ Lezione3/           # lezione precedente: non letta né modificata
 ├─ assistente/
 │  ├─ __init__.py
 │  ├─ __main__.py      # python -m assistente
@@ -133,7 +134,7 @@ Nel container gli stessi eventi sono leggibili con `docker logs -f assistente-de
 ## 9. Docker
 
 - `Dockerfile`: `python:3.14-slim`, installa solo `requirements.txt`, copia `assistente/`, `CMD ["python", "-m", "assistente"]`.
-- `.dockerignore`: `.env`, `.venv/`, `.git/`, `__pycache__/`, `.pytest_cache/`, `tests/`, `docs/`.
+- `.dockerignore`: `.env`, `.venv/`, `.git/`, `__pycache__/`, `.pytest_cache/`, `tests/`, `docs/`, `Lezione3/`.
 - `compose.yaml`: servizio `assistente`, `build: .`, `env_file: .env`, `environment: LM_BASE_URL=http://host.docker.internal:1234/v1`, `extra_hosts: ["host.docker.internal:host-gateway"]`, `stdin_open: true`, `tty: true`. Nessuna porta pubblicata.
 - Avvio: `docker compose build` poi `docker compose run --rm --name assistente-demo assistente`.
 - Se il container non raggiunge LM Studio, controllare indirizzo di ascolto di LM Studio («Serve on Local Network») e firewall; la soluzione verificata va nel README.
