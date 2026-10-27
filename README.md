@@ -98,4 +98,3 @@ Una risposta simulata non dimostra che il modello locale sappia usare lo strumen
 ## Limiti noti
 
 - I log su stderr si mescolano al testo in streaming (vedi Diagnosi).
-- Lo strumento `orologio` non restituisce il giorno della settimana: il modello può inventarlo in modo errato.

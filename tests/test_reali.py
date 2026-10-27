@@ -35,7 +35,7 @@ def test_orologio_reale(grafo):
     chiamate = [c for m in messaggi if isinstance(m, AIMessage) for c in m.tool_calls]
     assert any(c["name"] == "orologio" and c["args"].get("fuso") == "Asia/Tokyo" for c in chiamate), chiamate
     risultati = [m.content for m in messaggi if isinstance(m, ToolMessage)]
-    assert any(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+09:00 \(Asia/Tokyo\)", r) for r in risultati), risultati
+    assert any(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+09:00 \(Asia/Tokyo\), (lunedì|martedì|mercoledì|giovedì|venerdì|sabato|domenica)", r) for r in risultati), risultati
     finale = messaggi[-1]
     assert isinstance(finale, AIMessage) and not finale.tool_calls and finale.content.strip()
 

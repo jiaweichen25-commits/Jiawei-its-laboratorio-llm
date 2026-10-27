@@ -103,9 +103,9 @@ START → modello ─instrada()─┬─ "strumenti" → strumenti → modello
 | Parte | Decisione |
 |---|---|
 | Nome | `orologio` |
-| Descrizione per il modello | «Restituisce la data e l'ora correnti nel fuso orario indicato. Usalo ogni volta che servono data o ora attuali.» |
+| Descrizione per il modello | «Restituisce la data, l'ora e il giorno della settimana correnti nel fuso orario indicato. Usalo ogni volta che servono data, ora o giorno attuali.» |
 | Parametri | `fuso: str`, obbligatorio, nome IANA (es. `Europe/Rome`, `Asia/Tokyo`, `UTC`) |
-| Risultato | ISO 8601 al secondo con offset, seguito dal nome del fuso: `2026-10-27T00:42:10+09:00 (Asia/Tokyo)` |
+| Risultato | ISO 8601 al secondo con offset, nome del fuso e giorno della settimana in italiano, minuscolo, calcolato sulla data locale del fuso (tabella fissa, senza `locale`): `2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì` |
 | Errori | Fuso inesistente → `Errore: fuso orario sconosciuto: «<valore>»`; nessun fuso indovinato |
 
 Creato da `crea_orologio(adesso)`, dove `adesso()` restituisce un `datetime` UTC consapevole del fuso: in produzione l'ora di sistema, nei test un istante fisso.
@@ -116,7 +116,7 @@ Creato da `crea_orologio(adesso)`, dove `adesso()` restituisce un `datetime` UTC
 - Ogni turno: `grafo.stream({"messages": [HumanMessage(domanda)]}, config, stream_mode=["messages", "updates"])`.
   - Dal flusso `messages`: i token di testo prodotti dal nodo `modello` sono stampati man mano.
   - Dal flusso `updates`: le `tool_calls` complete del nodo `modello` e i `ToolMessage` del nodo `strumenti` producono, per ogni chiamata, la riga
-    `[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo)`.
+    `[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì`.
 - Errori di un turno (connessione, timeout, errore HTTP, limite di passaggi): a capo se lo streaming era a metà, messaggio in italiano con la causa probabile, ritorno al prompt. I messaggi aggiunti nel turno fallito sono rimossi con `RemoveMessage`, così la cronologia torna a com'era prima del turno.
 - `ChatOpenAI` con `max_retries=0` e timeout esplicito, perché gli errori emergano subito.
 
@@ -126,7 +126,7 @@ Modulo `logging` su stderr, formato `ora livello nome: messaggio`, livello da `L
 
 - `modello: inizio chiamata` / `modello: fine chiamata (1,8 s, tool_calls=1)`;
 - `strumenti: richiesta orologio {'fuso': 'Asia/Tokyo'}`;
-- `strumenti: risultato orologio → 2026-10-27T00:42:10+09:00 (Asia/Tokyo)`;
+- `strumenti: risultato orologio → 2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì`;
 - errori di un turno a livello `ERROR`.
 
 Nel container gli stessi eventi sono leggibili con `docker logs -f assistente-demo`.

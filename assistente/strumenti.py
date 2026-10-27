@@ -9,9 +9,11 @@ from langchain_core.tools import BaseTool, tool
 from pydantic import Field
 
 DESCRIZIONE_OROLOGIO = (
-    "Restituisce la data e l'ora correnti nel fuso orario indicato. "
-    "Usalo ogni volta che servono data o ora attuali."
+    "Restituisce la data, l'ora e il giorno della settimana correnti nel fuso orario indicato. "
+    "Usalo ogni volta che servono data, ora o giorno attuali."
 )
+
+GIORNI = ("lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica")
 
 
 def ora_utc() -> datetime:
@@ -29,6 +31,7 @@ def crea_orologio(adesso: Callable[[], datetime] = ora_utc) -> BaseTool:
             zona = ZoneInfo(fuso)
         except (ZoneInfoNotFoundError, ValueError):
             return f"Errore: fuso orario sconosciuto: «{fuso}»"
-        return f"{adesso().astimezone(zona).isoformat(timespec='seconds')} ({fuso})"
+        locale = adesso().astimezone(zona)
+        return f"{locale.isoformat(timespec='seconds')} ({fuso}), {GIORNI[locale.weekday()]}"
 
     return orologio

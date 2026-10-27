@@ -137,5 +137,5 @@ def test_testo_poi_traccia():
 
     conversa(grafo, config_sessione(), lettore("Che ore sono a Tokyo?"), out)
 
-    traccia = '[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo)'
+    traccia = '[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì'
     assert f"Controllo l'ora.\n{traccia}\nSono le 00:42." in out.getvalue()

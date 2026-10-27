@@ -33,7 +33,7 @@ def test_log_inizio_fine_modello(caplog):
 
 
 ISTANTE = datetime(2026, 10, 26, 15, 42, 10, tzinfo=timezone.utc)
-ORA_TOKYO = "2026-10-27T00:42:10+09:00 (Asia/Tokyo)"
+ORA_TOKYO = "2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì"
 
 
 def chiamata(fuso, id="c1", nome="orologio", args=None):

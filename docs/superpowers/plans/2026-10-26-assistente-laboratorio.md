@@ -327,3 +327,19 @@ Run: `docker run --rm --entrypoint ls its-laboratorio-llm-assistente -a /app` �
 - [ ] **Step 2: CLAUDE.md** — struttura dei moduli, comando dei test, comandi delle prove reali; nient'altro.
 - [ ] **Step 3: Verifica finale** con `superpowers:verification-before-completion`: `pytest -v`, `pytest -m lmstudio -v`, `pytest -m docker -v`, prova manuale con Compose. Resoconto con: test eseguiti ed esiti, problemi aperti, `git status`, `git log --oneline` dei commit prodotti.
 - [ ] **Step 4: Commit** — `docs: README e comandi del progetto`. Nessun push.
+
+---
+
+### Task 9: Giorno della settimana nel risultato dell'orologio
+
+Aggiunto il 2026-10-27 su decisione dell'utente: nella prova reale del Task 6 il modello ha scritto «giovedì 26 ottobre» quando era lunedì, perché lo strumento non restituiva il giorno della settimana.
+
+**Files:**
+- Modify: `assistente/strumenti.py`, `tests/test_strumenti.py`, `tests/test_grafo.py`, `tests/test_terminale.py`, `tests/test_reali.py`, `docs/superpowers/specs/2026-10-26-assistente-laboratorio-design.md` (sezione 6), `README.md`
+
+- [ ] **Step 1: Test (rosso)** — in `test_strumenti.py` il risultato diventa ISO 8601 + fuso + `, ` + giorno della settimana in italiano, minuscolo, calcolato sulla data locale del fuso (non su quella UTC). Con l'istante `2026-10-26T15:42:10Z`: `Asia/Tokyo` → `"2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì"`; `Europe/Rome` → `"2026-10-26T16:42:10+01:00 (Europe/Rome), lunedì"`; `UTC` → `"2026-10-26T15:42:10+00:00 (UTC), lunedì"`. Estate: `"2026-07-15T12:00:00+02:00 (Europe/Rome), mercoledì"`. Gli errori restano invariati. La descrizione per il modello diventa «Restituisce la data, l'ora e il giorno della settimana correnti nel fuso orario indicato. Usalo ogni volta che servono data, ora o giorno attuali.»
+- [ ] **Step 2: Implementazione** — tupla `GIORNI = ("lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica")` indicizzata con `weekday()` della data locale; niente `locale`/`strftime("%A")` (dipende dalla macchina).
+- [ ] **Step 3: Allineare** le costanti attese in `test_grafo.py`, `test_terminale.py` e la regex di `test_reali.py` (`..., \(Asia/Tokyo\), (lunedì|martedì|...|domenica)`).
+- [ ] **Step 4: Documenti** — specifica §6 (descrizione e formato del risultato con esempio `2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì`); README: togliere il limite «non restituisce il giorno della settimana» e aggiornare eventuali esempi.
+- [ ] **Step 5: Verificare** — `pytest -v` tutto verde; `pytest -m lmstudio -v` → 2 passed; prova manuale «Che giorno è oggi?» con il modello reale.
+- [ ] **Step 6: Commit** — `feat(strumenti): aggiunge il giorno della settimana all'orologio`. Nessun push.
