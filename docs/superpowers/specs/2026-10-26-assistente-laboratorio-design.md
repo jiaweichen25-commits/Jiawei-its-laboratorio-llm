@@ -1,6 +1,6 @@
 # Assistente del laboratorio — specifica
 
-Data: 2026-10-26 · Lezione 4 · Stato: in revisione
+Data: 2026-10-26 · Lezione 4 · Stato: approvata e implementata
 
 ## 1. Obiettivo
 
@@ -96,7 +96,7 @@ START → modello ─instrada()─┬─ "strumenti" → strumenti → modello
 - **`instrada`**: `"strumenti"` se l'ultimo messaggio ha `tool_calls`, altrimenti `END`.
 - **`strumenti`**: per ogni chiamata cerca lo strumento per nome ed esegue; produce un `ToolMessage` con lo stesso `tool_call_id`. Nome sconosciuto, argomenti non validi o eccezione → `ToolMessage` con testo che inizia per `Errore:`; il grafo continua. Registra nei log nome, argomenti e risultato.
 - `recursion_limit = 10` a ogni invocazione.
-- Costruzione: `costruisci_grafo(modello, strumenti, fuso_predefinito, checkpointer)`; il modello è iniettato, così i test usano un modello finto.
+- Costruzione: `costruisci_grafo(modello, fuso_predefinito, strumenti=(), checkpointer=None)`; il modello è iniettato, così i test usano un modello finto.
 
 ## 6. Strumento orologio (contratto)
 

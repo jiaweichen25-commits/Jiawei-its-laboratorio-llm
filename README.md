@@ -1,7 +1,7 @@
 # Assistente del laboratorio
 
 Applicazione da terminale in Python che conversa con un modello locale servito da LM Studio. Il flusso è un grafo
-LangGraph; il modello può chiamare lo strumento `orologio` (ora corrente in un fuso orario esplicito), che il programma
+LangGraph; il modello può chiamare lo strumento `orologio` (data, ora e giorno della settimana in un fuso orario esplicito), che il programma
 esegue davvero. La cronologia dura quanto la sessione (nessuna persistenza).
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `modello.py`, `strumenti.py`, `terminale.py`), `tests/`,
@@ -43,7 +43,8 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
 ```
 
 Scrivi le domande (es. «Che ore sono?», poi «E a New York?»); `esci` chiude la sessione. Quando il modello usa lo
-strumento, il programma lo esegue e l'ora compare nella risposta.
+strumento, il programma lo esegue, stampa una riga `[strumento] orologio(fuso="...") → ...` con il risultato e la
+risposta usa data, ora e giorno della settimana restituiti.
 
 ## Avvio con Docker Compose
 
@@ -90,7 +91,8 @@ Una risposta simulata non dimostra che il modello locale sappia usare lo strumen
 |---|---|
 | L'app stampa un errore di connessione ed esce con codice 1 | Server LM Studio non raggiungibile. Avvia il server di LM Studio e controlla `LM_BASE_URL`. |
 | L'app elenca degli ID ed esce con codice 1 | `LM_MODEL` non esiste. Copia un ID da `/v1/models`. |
-| Errore 404 su `/models` | `LM_BASE_URL` senza `/v1`. Il messaggio lo suggerisce; una `/` finale viene tolta. |
+| «Risposta inattesa da http://localhost:1234/models: LM_BASE_URL deve terminare con /v1. Il server dice: Unexpected endpoint or method. (GET /models)», codice 1 | `LM_BASE_URL` senza `/v1` (LM Studio risponde 200 con un corpo di errore). Aggiungi `/v1`; una `/` finale viene tolta. |
+| «LOG_LEVEL non valido: «VERBOSE»...», codice 1 | Valori ammessi: DEBUG, INFO, WARNING, ERROR, CRITICAL (anche minuscoli). |
 | `docker compose build` fallisce in `pip install` con `CERTIFICATE_VERIFY_FAILED` | Causa verificata: l'antivirus AVG con scansione HTTPS (certificato «AVG Web/Mail Shield Root», accettato da Windows ma non dal container). In AVG disattiva la scansione HTTPS di Web Shield oppure aggiungi eccezioni per `pypi.org` e `files.pythonhosted.org`. Non usare `--trusted-host`. |
 | I log (stderr) si mescolano al testo in streaming | Problema noto, non risolto. Per nasconderli imposta `LOG_LEVEL=WARNING` nel `.env`. |
 | Il container non raggiunge LM Studio | Non verificato su questa macchina (ha funzionato subito). Indicazione non verificata: abilita «Serve on Local Network» in LM Studio e controlla il firewall. |

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import tool
 from langgraph.errors import GraphRecursionError
 
 from assistente.grafo import LIMITE_PASSAGGI, costruisci_grafo
@@ -73,7 +74,20 @@ def test_strumento_sconosciuto():
 def test_argomenti_non_validi():
     _, stato = esegui(chiamata(None, args={}), AIMessage("Riprovo."))
 
-    assert stato["messages"][2].content.startswith("Errore:")
+    assert stato["messages"][2].content.startswith("Errore: argomenti non validi per orologio")
+
+
+def test_eccezione_dello_strumento():
+    @tool("rotto", description="Strumento che fallisce.")
+    def rotto(x: str) -> str:
+        raise RuntimeError("guasto")
+
+    modello = ModelloFinto(risposte=[chiamata(None, nome="rotto", args={"x": "a"}), AIMessage("Ok.")])
+    stato = costruisci_grafo(modello, "Europe/Rome", strumenti=[rotto]).invoke(
+        {"messages": [HumanMessage("prova")]}, {"recursion_limit": LIMITE_PASSAGGI}
+    )
+
+    assert stato["messages"][2].content == "Errore: esecuzione di rotto fallita: guasto"
 
 
 def test_limite_passaggi():

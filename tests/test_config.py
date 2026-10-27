@@ -76,3 +76,44 @@ def test_404_suggerisce_v1(monkeypatch):
 
     with pytest.raises(ErroreConfigurazione, match="/v1"):
         scarica_id_modelli("http://localhost:1234")
+
+
+class RispostaFinta:
+    def __init__(self, corpo: bytes):
+        self.corpo = corpo
+
+    def read(self, *args):
+        return self.corpo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_200_con_errore_suggerisce_v1(monkeypatch):
+    corpo = b'{"error":"Unexpected endpoint or method. (GET /models)"}'
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: RispostaFinta(corpo))
+
+    with pytest.raises(ErroreConfigurazione) as errore:
+        scarica_id_modelli("http://localhost:1234")
+
+    assert "/v1" in str(errore.value)
+    assert "Unexpected endpoint" in str(errore.value)
+
+
+def test_corpo_non_json_suggerisce_v1(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout: RispostaFinta(b"<html>no</html>"))
+
+    with pytest.raises(ErroreConfigurazione, match="/v1"):
+        scarica_id_modelli("http://localhost:1234")
+
+
+def test_log_level_non_valido():
+    with pytest.raises(ErroreConfigurazione, match="VERBOSE"):
+        carica_configurazione({**ENV, "LOG_LEVEL": "verbose"})
+
+
+def test_log_level_minuscolo_valido():
+    assert carica_configurazione({**ENV, "LOG_LEVEL": "debug"}).log_level == "DEBUG"

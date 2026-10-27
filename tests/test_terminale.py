@@ -139,3 +139,21 @@ def test_testo_poi_traccia():
 
     traccia = '[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì'
     assert f"Controllo l'ora.\n{traccia}\nSono le 00:42." in out.getvalue()
+
+
+def test_due_chiamate_due_tracce_in_ordine():
+    chiamate = AIMessage("", tool_calls=[
+        {"name": "orologio", "args": {"fuso": "Europe/Rome"}, "id": "c1"},
+        {"name": "orologio", "args": {"fuso": "Asia/Tokyo"}, "id": "c2"},
+    ])
+    modello = ModelloFinto(risposte=[chiamate, AIMessage("Fatto.")])
+    orologio = crea_orologio(lambda: datetime(2026, 10, 26, 15, 42, 10, tzinfo=timezone.utc))
+    grafo = costruisci_grafo(modello, "Europe/Rome", strumenti=[orologio], checkpointer=InMemorySaver())
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("Ora a Roma e a Tokyo?"), out)
+
+    tracce = [r for r in out.getvalue().splitlines() if r.startswith("[strumento]")]
+    assert len(tracce) == 2
+    assert 'orologio(fuso="Europe/Rome")' in tracce[0]
+    assert 'orologio(fuso="Asia/Tokyo")' in tracce[1]

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 OBBLIGATORIE = ("LM_BASE_URL", "LM_MODEL", "TZ_PREDEFINITO")
+LIVELLI_LOG = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 class ErroreConfigurazione(Exception):
@@ -43,11 +44,17 @@ def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
             f"TZ_PREDEFINITO non è un fuso orario IANA valido: «{fuso}» (esempio: Europe/Rome)."
         )
 
+    livello = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
+    if livello not in LIVELLI_LOG:
+        raise ErroreConfigurazione(
+            f"LOG_LEVEL non valido: «{livello}». Valori ammessi: {', '.join(LIVELLI_LOG)}."
+        )
+
     return Configurazione(
         base_url=env["LM_BASE_URL"].strip().rstrip("/"),
         modello=env["LM_MODEL"].strip(),
         fuso_predefinito=fuso,
-        log_level=env.get("LOG_LEVEL", "").strip().upper() or "INFO",
+        log_level=livello,
     )
 
 
@@ -63,10 +70,20 @@ def scarica_id_modelli(base_url: str) -> list[str]:
                 f"Endpoint non trovato ({url}): LM_BASE_URL deve terminare con /v1."
             ) from exc
         raise ErroreConfigurazione(f"LM Studio ha risposto con errore HTTP {exc.code} su {url}.") from exc
+    except ValueError as exc:  # corpo non JSON (JSONDecodeError)
+        raise ErroreConfigurazione(
+            f"Risposta inattesa da {url}: non è l'elenco dei modelli. LM_BASE_URL deve terminare con /v1."
+        ) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ErroreConfigurazione(
             f"LM Studio non raggiungibile su {base_url}: controllare che il server sia avviato, URL e porta."
         ) from exc
+    if not isinstance(dati, dict) or not isinstance(dati.get("data"), list):
+        dettaglio = dati.get("error") if isinstance(dati, dict) else None
+        raise ErroreConfigurazione(
+            f"Risposta inattesa da {url}: LM_BASE_URL deve terminare con /v1."
+            + (f" Il server dice: {dettaglio}" if dettaglio else "")
+        )
     return [modello["id"] for modello in dati["data"]]
 
 

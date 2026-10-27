@@ -7,8 +7,8 @@ Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del mod
 Comandi (PowerShell, dalla cartella del progetto):
 
 - test automatici: `.\.venv\Scripts\python.exe -m pytest`
-- prove reali, solo su richiesta: `.\.venv\Scripts\python.exe -m pytest -m lmstudio -v` (LM Studio attivo) e `... -m docker -v` (Docker e LM Studio attivi)
-- avvio: `.\.venv\Scripts\python.exe -m assistente` oppure `docker compose run --rm assistente`
+- prove reali, solo su richiesta: `.\.venv\Scripts\python.exe -m pytest -m lmstudio -v` (LM Studio attivo) e `.\.venv\Scripts\python.exe -m pytest -m docker -v` (Docker e LM Studio attivi)
+- avvio: `.\.venv\Scripts\python.exe -m assistente` oppure `docker compose build`, poi `docker compose run --rm --name assistente-demo assistente`
 
 ## Obiettivo
 

@@ -13,6 +13,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
+from pydantic import ValidationError
 
 LIMITE_PASSAGGI = 10
 
@@ -71,8 +72,10 @@ def costruisci_grafo(
             else:
                 try:
                     contenuto = str(strumento.invoke(args))
-                except Exception as exc:
+                except ValidationError as exc:
                     contenuto = f"Errore: argomenti non validi per {nome}: {exc}"
+                except Exception as exc:
+                    contenuto = f"Errore: esecuzione di {nome} fallita: {exc}"
             log.info("strumenti: risultato %s → %s", nome, contenuto)
             risultati.append(ToolMessage(contenuto, tool_call_id=chiamata["id"], name=nome))
         return {"messages": risultati}

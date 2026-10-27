@@ -31,7 +31,7 @@ def crea_orologio(adesso: Callable[[], datetime] = ora_utc) -> BaseTool:
             zona = ZoneInfo(fuso)
         except (ZoneInfoNotFoundError, ValueError):
             return f"Errore: fuso orario sconosciuto: «{fuso}»"
-        locale = adesso().astimezone(zona)
-        return f"{locale.isoformat(timespec='seconds')} ({fuso}), {GIORNI[locale.weekday()]}"
+        ora_locale = adesso().astimezone(zona)
+        return f"{ora_locale.isoformat(timespec='seconds')} ({fuso}), {GIORNI[ora_locale.weekday()]}"
 
     return orologio
