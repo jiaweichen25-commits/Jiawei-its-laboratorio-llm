@@ -117,3 +117,32 @@ def test_log_level_non_valido():
 
 def test_log_level_minuscolo_valido():
     assert carica_configurazione({**ENV, "LOG_LEVEL": "debug"}).log_level == "DEBUG"
+
+
+# ---------------------------------------------------------------- lezione 5: variante dell'orologio
+
+def test_variante_predefinita_mcp():
+    c = carica_configurazione(ENV)
+
+    assert c.variante == "mcp"
+    assert c.orologio_api_url == "http://localhost:8000"
+
+
+@pytest.mark.parametrize("valore, attesa", [("locale", "locale"), ("FASTAPI", "fastapi"), (" mcp ", "mcp")])
+def test_variante_valida(valore, attesa):
+    assert carica_configurazione({**ENV, "VARIANTE_OROLOGIO": valore}).variante == attesa
+
+
+def test_variante_non_valida_elenca_i_valori_ammessi():
+    with pytest.raises(ErroreConfigurazione) as errore:
+        carica_configurazione({**ENV, "VARIANTE_OROLOGIO": "sole"})
+
+    messaggio = str(errore.value)
+    assert "«sole»" in messaggio
+    assert "locale" in messaggio and "fastapi" in messaggio and "mcp" in messaggio
+
+
+def test_url_api_personalizzato_senza_barra_finale():
+    c = carica_configurazione({**ENV, "OROLOGIO_API_URL": "http://127.0.0.1:9000/"})
+
+    assert c.orologio_api_url == "http://127.0.0.1:9000"

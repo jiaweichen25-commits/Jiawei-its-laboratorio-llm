@@ -109,3 +109,11 @@ def test_trasporto_termina_il_server_con_la_sessione():
 def test_stdio_chiusura_pulita():
     with ClienteMCP(trasporto_stdio()) as c:
         assert c.chiama("converti", {"valore": 1, "da": "m", "a": "cm"}) == "1 m = 100 cm"
+
+
+def test_log_del_server_in_un_file():
+    # I log del server (stderr del sottoprocesso) vanno in server_mcp.log, non nel terminale della chat.
+    from assistente.client_mcp import FILE_LOG_SERVER
+
+    assert trasporto_stdio().log_file == FILE_LOG_SERVER
+    assert FILE_LOG_SERVER.name == "server_mcp.log"

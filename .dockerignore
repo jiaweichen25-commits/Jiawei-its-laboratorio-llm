@@ -6,3 +6,4 @@ __pycache__/
 tests/
 docs/
 Lezione3/
+server_mcp.log

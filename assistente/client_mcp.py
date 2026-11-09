@@ -35,6 +35,9 @@ from langchain_core.tools import BaseTool, StructuredTool
 log = logging.getLogger("assistente.mcp")
 
 RADICE_PROGETTO = Path(__file__).resolve().parent.parent
+# Lo stderr del server (i suoi log) finisce in questo file invece di mescolarsi alla chat.
+# È anche il primo posto da guardare se il server non parte (slide 24). Escluso da Git.
+FILE_LOG_SERVER = RADICE_PROGETTO / "server_mcp.log"
 
 
 class ErroreCollegamentoMCP(Exception):
@@ -50,7 +53,11 @@ def trasporto_stdio(modulo: str = "assistente.server_mcp") -> StdioTransport:
     # keep_alive=False: quando la sessione si chiude, anche il sottoprocesso del server termina
     # (il valore predefinito di FastMCP lo lascerebbe vivo tra una connessione e l'altra).
     return StdioTransport(
-        command=sys.executable, args=["-m", modulo], cwd=str(RADICE_PROGETTO), keep_alive=False
+        command=sys.executable,
+        args=["-m", modulo],
+        cwd=str(RADICE_PROGETTO),
+        keep_alive=False,
+        log_file=FILE_LOG_SERVER,
     )
 
 

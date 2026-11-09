@@ -28,7 +28,12 @@ def config_sessione() -> dict:
 def messaggio_sistema(fuso: str) -> SystemMessage:
     return SystemMessage(
         "Rispondi in italiano. Per conoscere data o ora usa sempre lo strumento `orologio`, "
-        f"senza inventarle. Se l'utente non indica un fuso orario, usa `{fuso}`."
+        f"senza inventarle. Se l'utente non indica un fuso orario, usa `{fuso}`. "
+        # Lezione 5: i due tool MCP aggiunti (slide 25). Senza questa frase un modello piccolo
+        # tende a fare i conti «a mente» invece di chiamare lo strumento.
+        "Per i calcoli usa sempre lo strumento `calcola` e per le conversioni di unità lo "
+        "strumento `converti`, senza fare i conti a mente. Se uno strumento restituisce un "
+        "errore, riferiscilo all'utente senza inventare un risultato."
     )
 
 
@@ -64,9 +69,12 @@ def costruisci_grafo(
         # Gli errori diventano risultati per il modello: il grafo non si interrompe.
         risultati = []
         for chiamata in state["messages"][-1].tool_calls:
-            nome, args = chiamata["name"], chiamata["args"]
-            log.info("strumenti: richiesta %s %s", nome, args)
+            nome, args, call_id = chiamata["name"], chiamata["args"], chiamata["id"]
             strumento = per_nome.get(nome)
+            # Lezione 5: la variante (locale / fastapi / mcp) viene dai metadata del tool e il
+            # call_id permette di seguire la richiesta fino al ToolMessage (traccia della slide 23).
+            variante = (strumento.metadata or {}).get("variante", "?") if strumento else "?"
+            log.info("strumenti: richiesta %s variante=%s call_id=%s argomenti=%s", nome, variante, call_id, args)
             if strumento is None:
                 contenuto = f"Errore: strumento sconosciuto: «{nome}»"
             else:
@@ -76,8 +84,12 @@ def costruisci_grafo(
                     contenuto = f"Errore: argomenti non validi per {nome}: {exc}"
                 except Exception as exc:
                     contenuto = f"Errore: esecuzione di {nome} fallita: {exc}"
-            log.info("strumenti: risultato %s → %s", nome, contenuto)
-            risultati.append(ToolMessage(contenuto, tool_call_id=chiamata["id"], name=nome))
+            # «Errore...» copre sia l'errore dello strumento sia quello di collegamento: mai un falso «ok».
+            esito = "errore" if contenuto.startswith("Errore") else "ok"
+            log.info("strumenti: risultato %s variante=%s call_id=%s esito=%s → %s",
+                     nome, variante, call_id, esito, contenuto)
+            # tool_call_id collega il risultato alla richiesta del modello (slide 12).
+            risultati.append(ToolMessage(contenuto, tool_call_id=call_id, name=nome))
         return {"messages": risultati}
 
     grafo = StateGraph(MessagesState)

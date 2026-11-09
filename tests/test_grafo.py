@@ -115,3 +115,33 @@ def test_due_chiamate_in_ordine():
     risultati = [m for m in stato["messages"] if isinstance(m, ToolMessage)]
     assert [m.tool_call_id for m in risultati] == ["c1", "c2"]
     assert risultati[1].content == ORA_TOKYO
+
+
+# ---------------------------------------------------------------- lezione 5
+
+def test_messaggio_di_sistema_cita_i_nuovi_strumenti():
+    modello = ModelloFinto(risposte=[AIMessage("Ciao!")])
+
+    costruisci_grafo(modello, "Europe/Rome").invoke({"messages": [HumanMessage("ciao")]})
+
+    sistema = modello.ricevuti[0][0].content
+    assert "calcola" in sistema and "converti" in sistema
+
+
+def test_log_con_variante_call_id_ed_esito(caplog):
+    # Slide 23: la traccia deve permettere di seguire la richiesta: variante, tool, call_id, esito.
+    caplog.set_level(logging.INFO, logger="assistente")
+
+    esegui(chiamata("Asia/Tokyo", id="call_01"), AIMessage("Sono le 00:42"))
+
+    assert "variante=locale" in caplog.text
+    assert "call_id=call_01" in caplog.text
+    assert "esito=ok" in caplog.text
+
+
+def test_log_esito_errore(caplog):
+    caplog.set_level(logging.INFO, logger="assistente")
+
+    esegui(chiamata("Mars/Olympus"), AIMessage("Fuso sconosciuto."))
+
+    assert "esito=errore" in caplog.text

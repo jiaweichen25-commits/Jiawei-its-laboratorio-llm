@@ -9,6 +9,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 OBBLIGATORIE = ("LM_BASE_URL", "LM_MODEL", "TZ_PREDEFINITO")
 LIVELLI_LOG = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+# Lezione 5 (slide 17): le tre varianti con cui il nodo strumenti raggiunge l'orologio.
+VARIANTI = ("locale", "fastapi", "mcp")
 
 
 class ErroreConfigurazione(Exception):
@@ -21,6 +23,9 @@ class Configurazione:
     modello: str
     fuso_predefinito: str
     log_level: str
+    # Lezione 5: valori predefiniti, così le configurazioni della lezione 4 restano valide.
+    variante: str = "mcp"                               # VARIANTE_OROLOGIO
+    orologio_api_url: str = "http://localhost:8000"     # OROLOGIO_API_URL (solo variante fastapi)
 
 
 def fuso_valido(nome: str) -> bool:
@@ -50,11 +55,20 @@ def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
             f"LOG_LEVEL non valido: «{livello}». Valori ammessi: {', '.join(LIVELLI_LOG)}."
         )
 
+    # Variante dell'orologio: facoltativa, predefinita «mcp»; maiuscole e spazi non contano.
+    variante = env.get("VARIANTE_OROLOGIO", "").strip().lower() or "mcp"
+    if variante not in VARIANTI:
+        raise ErroreConfigurazione(
+            f"VARIANTE_OROLOGIO non valida: «{variante}». Valori ammessi: {', '.join(VARIANTI)}."
+        )
+
     return Configurazione(
         base_url=env["LM_BASE_URL"].strip().rstrip("/"),
         modello=env["LM_MODEL"].strip(),
         fuso_predefinito=fuso,
         log_level=livello,
+        variante=variante,
+        orologio_api_url=(env.get("OROLOGIO_API_URL", "").strip() or "http://localhost:8000").rstrip("/"),
     )
 
 
