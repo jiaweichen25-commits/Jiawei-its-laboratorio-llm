@@ -42,3 +42,8 @@ def test_schema_descrive_il_fuso_iana(orologio):
 
     assert "IANA" in proprieta["description"]
     assert "Europe/Rome" in proprieta["description"]
+
+
+def test_variante_locale_nei_metadati(orologio):
+    # L'etichetta serve ai log del nodo strumenti: «variante=locale» (slide 23).
+    assert orologio.metadata == {"variante": "locale"}
