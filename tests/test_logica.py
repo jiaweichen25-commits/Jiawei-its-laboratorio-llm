@@ -89,3 +89,19 @@ def test_converti_categorie_incompatibili():
 def test_converti_unita_fuori_elenco():
     with pytest.raises(ErroreStrumento, match="«parsec»"):
         converti(1, "parsec", "m")
+
+
+# ---------------------------------------------------------------- correzioni dopo la revisione
+
+@pytest.mark.parametrize("espressione", ["(-8)**0.5", "((-1)**0.5)//1", "((-1)**0.5)%2"])
+def test_calcola_rifiuta_risultati_non_reali(espressione):
+    # La radice di un numero negativo darebbe un numero complesso: non è un risultato da calcolatrice.
+    with pytest.raises(ErroreStrumento, match="non reale"):
+        calcola(espressione)
+
+
+@pytest.mark.parametrize("espressione", ["1e999", "1e999-1e999", "-1e999"])
+def test_calcola_rifiuta_infinito_e_nan(espressione):
+    # inf e nan non sono risultati: presentarli come successo sarebbe un «falso successo» (slide 31).
+    with pytest.raises(ErroreStrumento, match="troppo grande|non valido"):
+        calcola(espressione)

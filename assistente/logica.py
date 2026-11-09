@@ -13,6 +13,7 @@ trasformarlo (testo «Errore: ...», risposta HTTP 400, oppure errore MCP con is
 """
 
 import ast  # «Abstract Syntax Tree»: trasforma il testo dell'espressione in un albero da ispezionare
+import math
 import operator
 from datetime import datetime, timezone
 from typing import Literal
@@ -61,8 +62,10 @@ def ora_nel_fuso(fuso: str, adesso: datetime) -> str:
 #   3. qualsiasi altro nodo (nomi, chiamate, attributi, stringhe...) viene rifiutato esplicitamente.
 
 LUNGHEZZA_MASSIMA = 200   # caratteri: un'espressione più lunga non è una richiesta ragionevole
-ESPONENTE_MASSIMO = 1000  # 2**99999 bloccherebbe il programma per calcolare un numero enorme
-RISULTATO_MASSIMO = 1e100
+# Esponenti enormi creano numeri giganteschi: 9**9**9 ha centinaia di milioni di cifre e
+# bloccherebbe il programma per minuti. Con un tetto all'esponente il calcolo resta istantaneo.
+ESPONENTE_MASSIMO = 1000
+RISULTATO_MASSIMO = 1e100  # oltre questo valore il risultato non è più leggibile né utile
 
 # Lista bianca: tipo di nodo dell'albero → funzione Python che esegue l'operazione.
 OPERAZIONI_BINARIE = {
@@ -80,9 +83,17 @@ OPERAZIONI_UNARIE = {
 }
 
 
-def _controlla_grandezza(numero: int | float) -> int | float:
-    """Rifiuta risultati enormi: proteggono memoria e tempo di calcolo."""
-    if abs(numero) > RISULTATO_MASSIMO:
+def _controlla_risultato(numero: int | float | complex) -> int | float:
+    """Accetta solo numeri reali, finiti e di grandezza ragionevole; altrimenti errore esplicito.
+
+    Senza questo controllo la calcolatrice restituirebbe come «successo» valori che non sono
+    risultati: un complesso ((-8)**0.5), infinito (1e999) o nan (1e999-1e999).
+    """
+    if isinstance(numero, complex):
+        raise ErroreStrumento("risultato non reale (numero complesso), es. radice di un numero negativo")
+    if isinstance(numero, float) and math.isnan(numero):
+        raise ErroreStrumento("risultato non valido (nan)")
+    if (isinstance(numero, float) and math.isinf(numero)) or abs(numero) > RISULTATO_MASSIMO:
         raise ErroreStrumento("risultato troppo grande")
     return numero
 
@@ -95,7 +106,7 @@ def _valuta(nodo: ast.AST) -> int | float:
     if isinstance(nodo, ast.Constant):
         # type(...) e non isinstance: True è un int per Python, ma non è un numero per noi.
         if type(nodo.value) in (int, float):
-            return nodo.value
+            return _controlla_risultato(nodo.value)  # anche le costanti: 1e999 vale già «infinito»
         raise ErroreStrumento(f"operazione non consentita: valore {nodo.value!r} non numerico")
 
     if isinstance(nodo, ast.UnaryOp) and type(nodo.op) in OPERAZIONI_UNARIE:
@@ -107,7 +118,7 @@ def _valuta(nodo: ast.AST) -> int | float:
         if isinstance(nodo.op, ast.Pow) and abs(destra) > ESPONENTE_MASSIMO:
             raise ErroreStrumento("risultato troppo grande: esponente oltre 1000")
         try:
-            return _controlla_grandezza(OPERAZIONI_BINARIE[type(nodo.op)](sinistra, destra))
+            return _controlla_risultato(OPERAZIONI_BINARIE[type(nodo.op)](sinistra, destra))
         except ZeroDivisionError:
             raise ErroreStrumento("divisione per zero") from None
         except OverflowError:  # es. 10.0**400 supera il massimo dei float

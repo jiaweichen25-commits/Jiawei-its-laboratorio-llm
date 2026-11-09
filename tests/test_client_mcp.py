@@ -117,3 +117,41 @@ def test_log_del_server_in_un_file():
 
     assert trasporto_stdio().log_file == FILE_LOG_SERVER
     assert FILE_LOG_SERVER.name == "server_mcp.log"
+
+
+def processo_vivo(pid: int) -> bool:
+    """True se il processo con quel PID è ancora in esecuzione (Windows: tasklist)."""
+    import os
+    import subprocess
+
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+    elenco = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+    return str(pid) in elenco
+
+
+def test_server_che_non_risponde_viene_terminato(tmp_path):
+    # Un processo che parte ma non parla MCP: avvia() si arrende dopo il timeout e annulla
+    # l'apertura, così il sottoprocesso viene terminato invece di restare acceso.
+    import sys
+    import time
+
+    from fastmcp.client.transports import StdioTransport
+
+    file_pid = tmp_path / "pid.txt"
+    codice = "import os, sys, time; open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(60)"
+    muto = StdioTransport(command=sys.executable, args=["-c", codice, str(file_pid)], keep_alive=False)
+
+    with pytest.raises(ErroreCollegamentoMCP, match="non ha risposto"):
+        ClienteMCP(muto, timeout=2).avvia()
+
+    pid = int(file_pid.read_text())
+    for _ in range(20):  # il sistema operativo può impiegare un attimo a togliere il processo
+        if not processo_vivo(pid):
+            break
+        time.sleep(0.25)
+    assert not processo_vivo(pid)

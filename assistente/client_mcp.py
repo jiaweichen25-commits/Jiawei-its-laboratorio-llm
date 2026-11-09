@@ -71,13 +71,15 @@ class ClienteMCP:
 
     def __init__(self, sorgente: Any, timeout: float = 15.0):
         self._sorgente = sorgente
-        self._timeout = timeout                 # secondi massimi per avvio e per ogni chiamata
+        self._timeout = timeout                 # secondi massimi di attesa: apertura, ogni chiamata, chiusura
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._sessione_futura = None            # la coroutine che tiene aperta la sessione
         self._client: Client | None = None      # valorizzato solo mentre la sessione è aperta
         self._stop: asyncio.Event | None = None # segnale «chiudi la sessione»
         self._pronto = threading.Event()        # avvia() aspetta questo segnale
+        self._terminata = threading.Event()     # chiudi() aspetta questo: sessione chiusa davvero
+        self._task: asyncio.Task | None = None  # il task asyncio di _sessione, per poterlo annullare
         self._catalogo: list = []
 
     # ------------------------------------------------------------------ ciclo di vita
@@ -100,6 +102,7 @@ class ClienteMCP:
 
     async def _sessione(self) -> None:
         """Gira nel thread di servizio: apre la sessione, la tiene viva finché non arriva lo stop."""
+        self._task = asyncio.current_task()
         try:
             # «async with» apre la connessione (avvia il sottoprocesso e fa l'handshake MCP)
             # e la chiude da sola all'uscita del blocco.
@@ -110,19 +113,23 @@ class ClienteMCP:
                 self._pronto.set()       # sblocca avvia()
                 await self._stop.wait()  # resta qui, con la sessione aperta, fino a chiudi()
         finally:
+            # Qui il blocco «async with» è già uscito: sessione chiusa e sottoprocesso terminato.
             self._client = None
-            self._pronto.set()  # sblocca avvia() anche se l'apertura è fallita
+            self._pronto.set()      # sblocca avvia() anche se l'apertura è fallita
+            self._terminata.set()   # sblocca chiudi()
 
     def chiudi(self) -> None:
         """Chiude la sessione (termina il sottoprocesso) e ferma il thread. Si può chiamare due volte."""
         if self._loop is None:
             return
         if self._stop is not None:
-            self._loop.call_soon_threadsafe(self._stop.set)  # fa uscire _sessione dall'attesa
-        try:
-            self._sessione_futura.result(self._timeout)
-        except Exception:
-            pass  # in chiusura un errore della sessione non interessa più
+            # Sessione aperta: si dà il segnale e _sessione esce dall'attesa chiudendo tutto.
+            self._loop.call_soon_threadsafe(self._stop.set)
+        elif self._task is not None:
+            # Apertura ancora in corso (server che non risponde): si annulla il task, così
+            # «async with» chiude comunque il collegamento e termina il sottoprocesso.
+            self._loop.call_soon_threadsafe(self._task.cancel)
+        self._terminata.wait(self._timeout)  # si aspetta la chiusura vera, non solo il segnale
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(self._timeout)
         self._loop.close()
