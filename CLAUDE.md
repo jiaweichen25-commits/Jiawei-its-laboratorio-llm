@@ -2,12 +2,13 @@
 
 Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `its-laboratorio-llm/`.
 
-Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello), `grafo.py` (stato, nodi, instradamento), `modello.py` (collegamento a LM Studio), `strumenti.py` (orologio), `terminale.py` (interfaccia); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifica e piano in `docs/superpowers/`.
+Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio), `grafo.py` (stato, nodi, instradamento), `modello.py` (collegamento a LM Studio), `terminale.py` (interfaccia), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
 
 Comandi (PowerShell, dalla cartella del progetto):
 
 - test automatici: `.\.venv\Scripts\python.exe -m pytest`
 - prove reali, solo su richiesta: `.\.venv\Scripts\python.exe -m pytest -m lmstudio -v` (LM Studio attivo) e `.\.venv\Scripts\python.exe -m pytest -m docker -v` (Docker e LM Studio attivi)
+- servizio della variante fastapi: `.\.venv\Scripts\python.exe -m uvicorn assistente.servizio_api:app --port 8000`
 - avvio: `.\.venv\Scripts\python.exe -m assistente` oppure `docker compose build`, poi `docker compose run --rm --name assistente-demo assistente`
 
 ## Obiettivo
@@ -17,12 +18,13 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - organizza il flusso in un grafo LangGraph esplicito (stato, nodi, instradamento riconoscibili);
 - usa un modello servito da LM Studio, che resta sul computer host;
 - conserva la cronologia della conversazione per la durata della sessione (nessuna persistenza);
-- offre uno strumento orologio con fuso orario esplicito, richiesto dal modello tramite tool calling ed eseguito davvero dal programma;
+- offre uno strumento orologio con fuso orario esplicito, richiesto dal modello tramite tool calling ed eseguito davvero dal programma, raggiungibile in tre varianti (locale, FastAPI, FastMCP);
+- espone tramite un server MCP anche la calcolatrice sicura e il convertitore di unità (lezione 5);
 - si avvia anche con Docker Compose.
 
 ## Confini
 
-- Implementare solo i requisiti concordati. Altri strumenti, MCP, workflow e RAG arriveranno nelle lezioni successive: non anticiparli.
+- Implementare solo i requisiti concordati. Workflow, RAG e altri strumenti arriveranno nelle lezioni successive: non anticiparli.
 - Niente interfacce grafiche, servizi cloud o framework non concordati.
 - Lavorare solo dentro `its-laboratorio-llm/`. La repository contiene altre lezioni: non leggerle per copiarne il codice e non modificarle.
 - Lavorare nel branch corrente; nessun branch o worktree nuovo se non richiesto.
