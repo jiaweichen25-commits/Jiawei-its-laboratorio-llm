@@ -2,3 +2,7 @@ langgraph==1.2.17
 langchain-openai==1.7.2
 python-dotenv==1.2.4
 tzdata==2026.5
+fastmcp==4.1.6
+fastapi==0.162.2
+uvicorn==0.54.0
+httpx==0.28.1
