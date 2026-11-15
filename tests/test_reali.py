@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from assistente.client_mcp import ClienteMCP, crea_strumenti_mcp, trasporto_stdio
 from assistente.config import carica_configurazione, verifica_modello
-from assistente.grafo import LIMITE_PASSAGGI, costruisci_grafo
+from assistente.grafo import LIMITE_PASSAGGI, OpzioniGrafo, costruisci_grafo, risposta_rifiuto
 from assistente.modello import crea_modello
 from assistente.varianti import strumenti_per_variante
 
@@ -96,3 +96,40 @@ def test_conversazione_ordinaria(cfg, strumenti_mcp):
     messaggi = chiedi(grafo_per(cfg, strumenti_mcp, "mcp"), "Ciao, come stai?")
 
     assert not any(isinstance(m, ToolMessage) for m in messaggi)
+
+
+# ---------------------------------------------------------------- lezione 6
+
+def grafo_lezione6(cfg, strumenti_mcp, checkpointer=None, **opzioni):
+    """Grafo con i nodi della lezione 6 accesi come indicato (gli altri restano spenti)."""
+    strumenti = strumenti_per_variante("mcp", strumenti_mcp, cfg.orologio_api_url)
+    return costruisci_grafo(
+        crea_modello(cfg), cfg.fuso_predefinito, strumenti=strumenti,
+        checkpointer=checkpointer, opzioni=OpzioniGrafo(**opzioni),
+    )
+
+
+def test_router_reale_in_ambito(cfg, strumenti_mcp):
+    messaggi = chiedi(grafo_lezione6(cfg, strumenti_mcp, ambito=cfg.ambito), "Che ore sono a Tokyo?")
+
+    assert any(c["name"] == "orologio" for c in chiamate(messaggi)), messaggi
+    risposta_finale(messaggi)
+
+
+def test_router_reale_fuori_ambito(cfg, strumenti_mcp):
+    messaggi = chiedi(grafo_lezione6(cfg, strumenti_mcp, ambito=cfg.ambito), "Dammi la ricetta della carbonara")
+
+    assert messaggi[-1].content == risposta_rifiuto(cfg.ambito), messaggi
+    assert not chiamate(messaggi)
+
+
+def test_router_reale_seguito_resta_in_ambito(cfg, strumenti_mcp):
+    # «e a New York?» da sola non dice nulla: il router deve leggerla insieme allo scambio precedente.
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    grafo = grafo_lezione6(cfg, strumenti_mcp, checkpointer=InMemorySaver(), ambito=cfg.ambito)
+    config = {"configurable": {"thread_id": "seguito"}, "recursion_limit": LIMITE_PASSAGGI}
+    grafo.invoke({"messages": [HumanMessage("Che ore sono a Tokyo?")]}, config)
+    messaggi = grafo.invoke({"messages": [HumanMessage("e a New York?")]}, config)["messages"]
+
+    assert messaggi[-1].content != risposta_rifiuto(cfg.ambito), messaggi[-1].content

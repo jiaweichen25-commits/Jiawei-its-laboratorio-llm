@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import GraphRecursionError
 
-from assistente.grafo import config_sessione, costruisci_grafo
+from assistente.grafo import OpzioniGrafo, config_sessione, costruisci_grafo, risposta_rifiuto
 from assistente.modello import descrivi_errore
 from assistente.strumenti import crea_orologio
 from assistente.terminale import conversa, formatta_traccia
@@ -157,3 +157,22 @@ def test_due_chiamate_due_tracce_in_ordine():
     assert len(tracce) == 2
     assert 'orologio(fuso="Europe/Rome")' in tracce[0]
     assert 'orologio(fuso="Asia/Tokyo")' in tracce[1]
+
+
+# ---------------------------------------------------------------- lezione 6
+
+def grafo_lezione6(opzioni, *risposte):
+    modello = ModelloFinto(risposte=list(risposte))
+    return modello, costruisci_grafo(modello, "Europe/Rome", checkpointer=InMemorySaver(), opzioni=opzioni)
+
+
+def test_rifiuto_mostrato_all_utente():
+    _, grafo = grafo_lezione6(
+        OpzioniGrafo(ambito="data e ora"), AIMessage('{"categoria": "fuori_ambito", "motivo": "ricetta"}')
+    )
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("Dammi una ricetta"), out)
+
+    assert risposta_rifiuto("data e ora") in out.getvalue()
+    assert "categoria" not in out.getvalue()  # il JSON del router non va mostrato

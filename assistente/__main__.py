@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from assistente.client_mcp import ClienteMCP, ErroreCollegamentoMCP, crea_strumenti_mcp, trasporto_stdio
 from assistente.config import ErroreConfigurazione, carica_configurazione, verifica_modello
-from assistente.grafo import config_sessione, costruisci_grafo
+from assistente.grafo import OpzioniGrafo, config_sessione, costruisci_grafo
 from assistente.modello import crea_modello, descrivi_errore
 from assistente.terminale import conversa
 from assistente.varianti import strumenti_per_variante
@@ -65,6 +65,13 @@ def main() -> int:
             cfg.fuso_predefinito,
             strumenti=strumenti,
             checkpointer=InMemorySaver(),
+            # Lezione 6: router, revisore e riassunto si accendono con i valori del file .env.
+            opzioni=OpzioniGrafo(
+                ambito=cfg.ambito,
+                limite_revisioni=cfg.limite_revisioni,
+                soglia_riassunto=cfg.soglia_riassunto,
+                messaggi_da_conservare=cfg.messaggi_da_conservare,
+            ),
         )
         conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore)
     finally:

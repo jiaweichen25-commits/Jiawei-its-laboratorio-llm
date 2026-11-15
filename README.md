@@ -20,9 +20,32 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 | `fastapi` | servizio HTTP FastAPI + wrapper `httpx` scritto a mano e registrato con `@tool` | `servizio_api.py`, `wrapper_http.py` |
 | `mcp` (predefinita) | server FastMCP (stdio) + client che legge il catalogo (`tools/list`) e lo adatta in tool LangChain | `server_mcp.py`, `client_mcp.py` |
 
-Struttura: `assistente/` (`config.py`, `grafo.py`, `modello.py`, `terminale.py`, `logica.py`, `strumenti.py`,
-`servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`), `tests/`, `Dockerfile`,
-`compose.yaml`, `docs/superpowers/` (specifiche e piani).
+Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
+`strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`), `tests/`,
+`Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+
+## Lezione 6 — evolvere il grafo
+
+Lo stesso modello viene chiamato con prompt di sistema diversi per fare lavori diversi (slide 3). I nodi nuovi si
+accendono dalla configurazione; la loro logica è in `assistente/controllo.py`, il collegamento in `assistente/grafo.py`.
+
+### Step 1 · Router: conversazione o fuori ambito
+
+```
+START → router ─┬─ conversazione → modello ⇄ strumenti → END
+                └─ fuori_ambito  → rifiuto → END
+```
+
+- L'ambito dell'agente è nella variabile `AMBITO_AGENTE` del file `.env`, non nel codice. Se manca vale il testo
+  predefinito in `config.py`.
+- Il nodo `router` chiede al modello un output strutturato, `{"categoria": "conversazione" | "fuori_ambito",
+  "motivo": "..."}`, vincolato con `response_format` (schema JSON) e poi validato con Pydantic.
+- Fuori ambito: il nodo `rifiuto` risponde con un testo fisso e il nodo `modello` non viene eseguito.
+- Il router non riceve gli strumenti: se servono lo decide l'agente, come prima.
+- Se la risposta del router non è leggibile la domanda passa all'agente e nei log compare un `WARNING`.
+
+Evidenze nei log (`LOG_LEVEL=INFO`): `router: categoria=... motivo=...`; per una domanda fuori ambito la riga
+`rifiuto: richiesta fuori ambito, il nodo modello non viene eseguito` e nessuna riga `modello: inizio chiamata`.
 
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 
@@ -43,7 +66,9 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
 
    Variabili: `LM_BASE_URL` (con `/v1`), `LM_MODEL`, `TZ_PREDEFINITO` (fuso IANA, es. `Europe/Rome`),
    `LOG_LEVEL` (facoltativa), `VARIANTE_OROLOGIO` (`locale`, `fastapi` o `mcp`; facoltativa, predefinita `mcp`),
-   `OROLOGIO_API_URL` (solo per `fastapi`; predefinito `http://localhost:8000`).
+   `OROLOGIO_API_URL` (solo per `fastapi`; predefinito `http://localhost:8000`). Lezione 6, tutte facoltative:
+   `AMBITO_AGENTE` (di che cosa si occupa l'agente), `LIMITE_REVISIONI` (predefinito 2; 0 spegne il revisore),
+   `SOGLIA_RIASSUNTO` (predefinito 12 messaggi; 0 spegne il riassunto), `MESSAGGI_DA_CONSERVARE` (predefinito 6).
 
 3. In LM Studio carica un modello e avvia il server locale. Leggi gli ID disponibili e copia quello scelto in
    `LM_MODEL` nel file `.env` (l'ID è quello restituito dal server, non va inventato):
@@ -123,6 +148,10 @@ come sottoprocesso stdio vero (`test_client_mcp.py`), scelta della variante e av
 
 Una risposta simulata non dimostra che il modello locale sappia usare lo strumento: per questo esistono le prove reali
 (`test_reali.py`: orologio con varianti `mcp` e `locale`, calcolatrice, convertitore).
+
+Lezione 6: `test_controllo.py` (output strutturato, trascrizione, messaggi del router) e `test_grafo_lezione6.py`
+(percorsi del grafo con le risposte del router simulate). Prove reali del router in `test_reali.py`: domanda in ambito,
+domanda fuori ambito, domanda di seguito.
 
 ## Diagnosi
 

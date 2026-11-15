@@ -53,8 +53,9 @@ def formatta_traccia(nome: str, args: dict, risultato: str) -> str:
 
 def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
     chiamate = {}  # tool_call_id → chiamata completa, dal messaggio del nodo modello
+    # `revisioni: 0` riporta a zero il contatore del revisore a ogni nuova domanda (lezione 6).
     for modo, dati in grafo.stream(
-        {"messages": [HumanMessage(domanda)]}, config, stream_mode=["messages", "updates"]
+        {"messages": [HumanMessage(domanda)], "revisioni": 0}, config, stream_mode=["messages", "updates"]
     ):
         if modo == "messages":
             frammento, meta = dati
@@ -67,6 +68,9 @@ def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
             for risultato in dati["strumenti"]["messages"]:
                 chiamata = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
                 uscita.riga(formatta_traccia(chiamata["name"], chiamata["args"], risultato.content))
+        elif "rifiuto" in dati:
+            # Il rifiuto è un testo fisso: non arriva in streaming dal nodo modello, va stampato qui.
+            uscita.riga(dati["rifiuto"]["messages"][-1].content)
     uscita.chiudi_riga()
 
 

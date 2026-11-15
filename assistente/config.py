@@ -11,6 +11,13 @@ OBBLIGATORIE = ("LM_BASE_URL", "LM_MODEL", "TZ_PREDEFINITO")
 LIVELLI_LOG = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 # Lezione 5 (slide 17): le tre varianti con cui il nodo strumenti raggiunge l'orologio.
 VARIANTI = ("locale", "fastapi", "mcp")
+# Lezione 6 (slide 4): l'ambito dell'agente sta in configurazione, non nel codice. Questo è solo
+# il valore usato quando AMBITO_AGENTE non è impostata.
+AMBITO_PREDEFINITO = (
+    "Assistente del laboratorio del corso su LLM e agenti: saluti e conversazione sulla sessione "
+    "in corso, spiegazioni su LLM, agenti, MCP e argomenti di informatica, data e ora nei fusi "
+    "orari, calcoli aritmetici, conversioni di unità di misura."
+)
 
 
 class ErroreConfigurazione(Exception):
@@ -26,6 +33,11 @@ class Configurazione:
     # Lezione 5: valori predefiniti, così le configurazioni della lezione 4 restano valide.
     variante: str = "mcp"                               # VARIANTE_OROLOGIO
     orologio_api_url: str = "http://localhost:8000"     # OROLOGIO_API_URL (solo variante fastapi)
+    # Lezione 6: i tre nodi nuovi del grafo. Con 0 il revisore o il riassunto restano spenti.
+    ambito: str = AMBITO_PREDEFINITO                    # AMBITO_AGENTE (router)
+    limite_revisioni: int = 2                           # LIMITE_REVISIONI (revisore)
+    soglia_riassunto: int = 12                          # SOGLIA_RIASSUNTO (riassunto)
+    messaggi_da_conservare: int = 6                     # MESSAGGI_DA_CONSERVARE (riassunto)
 
 
 def fuso_valido(nome: str) -> bool:
@@ -34,6 +46,20 @@ def fuso_valido(nome: str) -> bool:
     except (ZoneInfoNotFoundError, ValueError):
         return False
     return True
+
+
+def _intero(env: Mapping[str, str], nome: str, predefinito: int) -> int:
+    """Legge un intero non negativo facoltativo; l'errore nomina la variabile."""
+    testo = env.get(nome, "").strip()
+    if not testo:
+        return predefinito
+    try:
+        valore = int(testo)
+    except ValueError:
+        valore = -1
+    if valore < 0:
+        raise ErroreConfigurazione(f"{nome} deve essere un numero intero maggiore o uguale a 0: «{testo}».")
+    return valore
 
 
 def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
@@ -62,6 +88,16 @@ def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
             f"VARIANTE_OROLOGIO non valida: «{variante}». Valori ammessi: {', '.join(VARIANTI)}."
         )
 
+    limite_revisioni = _intero(env, "LIMITE_REVISIONI", 2)
+    soglia_riassunto = _intero(env, "SOGLIA_RIASSUNTO", 12)
+    da_conservare = _intero(env, "MESSAGGI_DA_CONSERVARE", 6)
+    # Il riassunto deve lasciare qualcosa da comprimere: se si conservano tutti i messaggi non serve.
+    if soglia_riassunto > 0 and not 2 <= da_conservare < soglia_riassunto:
+        raise ErroreConfigurazione(
+            f"MESSAGGI_DA_CONSERVARE deve essere almeno 2 e minore di SOGLIA_RIASSUNTO "
+            f"({soglia_riassunto}): «{da_conservare}»."
+        )
+
     return Configurazione(
         base_url=env["LM_BASE_URL"].strip().rstrip("/"),
         modello=env["LM_MODEL"].strip(),
@@ -69,6 +105,10 @@ def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
         log_level=livello,
         variante=variante,
         orologio_api_url=(env.get("OROLOGIO_API_URL", "").strip() or "http://localhost:8000").rstrip("/"),
+        ambito=env.get("AMBITO_AGENTE", "").strip() or AMBITO_PREDEFINITO,
+        limite_revisioni=limite_revisioni,
+        soglia_riassunto=soglia_riassunto,
+        messaggi_da_conservare=da_conservare,
     )
 
 

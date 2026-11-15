@@ -4,6 +4,7 @@ import urllib.request
 import pytest
 
 from assistente.config import (
+    AMBITO_PREDEFINITO,
     Configurazione,
     ErroreConfigurazione,
     carica_configurazione,
@@ -146,3 +147,41 @@ def test_url_api_personalizzato_senza_barra_finale():
     c = carica_configurazione({**ENV, "OROLOGIO_API_URL": "http://127.0.0.1:9000/"})
 
     assert c.orologio_api_url == "http://127.0.0.1:9000"
+
+
+# ---------------------------------------------------------------- lezione 6: ambito, revisioni, riassunto
+
+def test_predefiniti_lezione_6():
+    c = carica_configurazione(ENV)
+
+    assert c.ambito == AMBITO_PREDEFINITO
+    assert (c.limite_revisioni, c.soglia_riassunto, c.messaggi_da_conservare) == (2, 12, 6)
+
+
+def test_ambito_personalizzato_senza_spazi():
+    assert carica_configurazione({**ENV, "AMBITO_AGENTE": " solo calcoli "}).ambito == "solo calcoli"
+
+
+def test_ambito_vuoto_usa_il_predefinito():
+    assert carica_configurazione({**ENV, "AMBITO_AGENTE": "  "}).ambito == AMBITO_PREDEFINITO
+
+
+@pytest.mark.parametrize("nome, valore", [
+    ("LIMITE_REVISIONI", "tante"),
+    ("SOGLIA_RIASSUNTO", "-1"),
+    ("MESSAGGI_DA_CONSERVARE", "2.5"),
+])
+def test_intero_non_valido_nomina_la_variabile(nome, valore):
+    with pytest.raises(ErroreConfigurazione, match=nome):
+        carica_configurazione({**ENV, nome: valore})
+
+
+def test_messaggi_da_conservare_deve_stare_sotto_la_soglia():
+    with pytest.raises(ErroreConfigurazione, match="MESSAGGI_DA_CONSERVARE"):
+        carica_configurazione({**ENV, "SOGLIA_RIASSUNTO": "4", "MESSAGGI_DA_CONSERVARE": "6"})
+
+
+def test_soglia_zero_spegne_il_riassunto():
+    c = carica_configurazione({**ENV, "SOGLIA_RIASSUNTO": "0", "LIMITE_REVISIONI": "0"})
+
+    assert (c.soglia_riassunto, c.limite_revisioni) == (0, 0)
