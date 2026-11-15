@@ -133,3 +133,14 @@ def test_router_reale_seguito_resta_in_ambito(cfg, strumenti_mcp):
     messaggi = grafo.invoke({"messages": [HumanMessage("e a New York?")]}, config)["messages"]
 
     assert messaggi[-1].content != risposta_rifiuto(cfg.ambito), messaggi[-1].content
+
+
+def test_revisore_reale_domanda_in_due_parti(cfg, strumenti_mcp):
+    # Slide 5: la risposta deve coprire entrambe le parti; se la prima bozza ne salta una, il revisore la rimanda.
+    messaggi = chiedi(
+        grafo_lezione6(cfg, strumenti_mcp, limite_revisioni=2),
+        "Che ore sono a Tokyo e quanto fa 12 * 8?",
+    )
+
+    assert any(c["name"] == "orologio" for c in chiamate(messaggi)), messaggi
+    assert "96" in risposta_finale(messaggi)

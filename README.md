@@ -47,6 +47,26 @@ START → router ─┬─ conversazione → modello ⇄ strumenti → END
 Evidenze nei log (`LOG_LEVEL=INFO`): `router: categoria=... motivo=...`; per una domanda fuori ambito la riga
 `rifiuto: richiesta fuori ambito, il nodo modello non viene eseguito` e nessuna riga `modello: inizio chiamata`.
 
+### Step 2 · Revisore: la risposta è coerente con la domanda?
+
+```
+modello ─(nessuno strumento richiesto)→ revisore ─┬─ coerente, o limite raggiunto → END
+                                                  └─ non coerente + motivo → modello
+```
+
+- Il nodo `revisore` riceve la domanda dell'utente, i risultati degli strumenti del turno e la risposta proposta.
+  Output strutturato: `{"coerente": true | false, "motivo": "..."}`. Giudica se la risposta copre tutte le parti
+  della domanda, non se i fatti sono veri.
+- Non coerente: il motivo entra in cronologia come messaggio che inizia con `[Revisione]` e l'agente riscrive.
+- `LIMITE_REVISIONI` (predefinito 2) è il numero massimo di rinvii; il contatore `revisioni` sta nello stato del grafo
+  e riparte da zero a ogni domanda. Al limite resta l'ultima risposta e nei log compare
+  `WARNING revisore: limite di revisioni raggiunto`.
+- Scelta sull'interfaccia (slide 18): nel terminale la bozza si vede mentre viene scritta. Se il revisore la boccia
+  compare la riga `[revisore] non coerente: <motivo>` e subito dopo la risposta nuova. È la scelta più semplice e
+  lascia vedere che cosa fa il revisore; il prezzo è che l'utente legge anche la bozza scartata.
+
+Evidenze nei log: `revisore: coerente ...` oppure `revisore: non coerente (revisione 1 di 2) motivo=...`.
+
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 
 ## Preparazione
@@ -150,8 +170,9 @@ Una risposta simulata non dimostra che il modello locale sappia usare lo strumen
 (`test_reali.py`: orologio con varianti `mcp` e `locale`, calcolatrice, convertitore).
 
 Lezione 6: `test_controllo.py` (output strutturato, trascrizione, messaggi del router) e `test_grafo_lezione6.py`
-(percorsi del grafo con le risposte del router simulate). Prove reali del router in `test_reali.py`: domanda in ambito,
-domanda fuori ambito, domanda di seguito.
+(percorsi del grafo con le risposte di router e revisore simulate, compreso un revisore che rifiuta sempre e si ferma
+al limite). Prove reali in `test_reali.py`: router con domanda in ambito, fuori ambito e di seguito; revisore con una
+domanda in due parti.
 
 ## Diagnosi
 

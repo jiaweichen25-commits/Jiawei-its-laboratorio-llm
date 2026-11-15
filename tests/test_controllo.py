@@ -9,6 +9,8 @@ from assistente.controllo import (
     DecisioneRouter,
     chiedi_strutturato,
     e_revisione,
+    indicazione_revisione,
+    messaggi_revisore,
     messaggi_router,
     trascrivi,
 )
@@ -85,3 +87,43 @@ def test_messaggi_router_solo_ultimi_quattro_senza_strumenti_ne_revisioni():
     assert "vecchissima" not in utente.content
     assert "10:00" not in utente.content and "[Revisione]" not in utente.content
     assert all(testo in utente.content for testo in ("d1", "r1", "r1 completa", "d2"))
+
+
+# ---------------------------------------------------------------- revisore
+
+def test_messaggi_revisore_domanda_risultati_e_risposta():
+    cronologia = [
+        HumanMessage("turno vecchio"), AIMessage("risposta vecchia"),
+        HumanMessage("Che ore sono a Tokyo e quanto fa 12 * 8?"),
+        AIMessage("", tool_calls=[{"name": "orologio", "args": {}, "id": "c1"}]),
+        ToolMessage("00:42", tool_call_id="c1", name="orologio"),
+        AIMessage("A Tokyo sono le 00:42."),
+    ]
+
+    sistema, utente = messaggi_revisore(cronologia)
+
+    assert isinstance(sistema, SystemMessage)
+    assert "Che ore sono a Tokyo e quanto fa 12 * 8?" in utente.content
+    assert "Strumento orologio: 00:42" in utente.content
+    assert "A Tokyo sono le 00:42." in utente.content
+    assert "turno vecchio" not in utente.content and "risposta vecchia" not in utente.content
+
+
+def test_messaggi_revisore_la_domanda_non_e_l_indicazione_di_revisione():
+    cronologia = [
+        HumanMessage("Che ore sono a Tokyo e quanto fa 12 * 8?"), AIMessage("A Tokyo sono le 00:42."),
+        indicazione_revisione("manca il calcolo"), AIMessage("Sono le 00:42 e fa 96."),
+    ]
+
+    _, utente = messaggi_revisore(cronologia)
+
+    assert "Che ore sono a Tokyo e quanto fa 12 * 8?" in utente.content
+    assert "Sono le 00:42 e fa 96." in utente.content
+    assert "A Tokyo sono le 00:42." not in utente.content  # la bozza scartata non è la risposta da valutare
+
+
+def test_indicazione_revisione():
+    indicazione = indicazione_revisione("manca il calcolo")
+
+    assert e_revisione(indicazione)
+    assert "manca il calcolo" in indicazione.content

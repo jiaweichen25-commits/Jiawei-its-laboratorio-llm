@@ -176,3 +176,23 @@ def test_rifiuto_mostrato_all_utente():
 
     assert risposta_rifiuto("data e ora") in out.getvalue()
     assert "categoria" not in out.getvalue()  # il JSON del router non va mostrato
+
+
+def test_revisione_mostrata_e_contatore_azzerato_al_turno_successivo():
+    no = AIMessage('{"coerente": false, "motivo": "manca il calcolo"}')
+    si = AIMessage('{"coerente": true, "motivo": "ok"}')
+    _, grafo = grafo_lezione6(
+        OpzioniGrafo(limite_revisioni=1),
+        AIMessage("Sono le 10."), no, AIMessage("Sono le 10 e fa 96."), no,   # primo turno: limite 1 raggiunto
+        AIMessage("Ciao."), no, AIMessage("Ciao di nuovo."), si,              # secondo turno: si può rivedere ancora
+    )
+    config = config_sessione()
+    out = io.StringIO()
+
+    conversa(grafo, config, lettore("Che ore sono e quanto fa 12 * 8?", "ciao"), out)
+
+    righe = out.getvalue().splitlines()
+    assert "[revisore] non coerente: manca il calcolo" in righe
+    assert righe.index("Sono le 10.") < righe.index("[revisore] non coerente: manca il calcolo") < righe.index("Sono le 10 e fa 96.")
+    assert "Ciao di nuovo." in righe  # al secondo turno il contatore è ripartito da zero
+    assert "coerente\"" not in out.getvalue()  # il JSON del revisore non va mostrato

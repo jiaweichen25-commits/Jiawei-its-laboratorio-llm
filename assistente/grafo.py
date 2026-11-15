@@ -7,7 +7,11 @@ Senza opzioni è il grafo delle lezioni 4 e 5:
 
 La lezione 6 aggiunge nodi che si accendono con `OpzioniGrafo` (un nodo spento non esiste nel grafo):
 
-    START → router ─instrada_router()─┬─ "conversazione" → modello ⇄ strumenti … → END
+    START → router ─instrada_router()─┬─ "conversazione" → modello ⇄ strumenti
+                                      │                        │ (nessuno strumento richiesto)
+                                      │                        ▼
+                                      │                     revisore ─instrada_revisore()─┬─ END
+                                      │                                                   └─ modello
                                       └─ "fuori_ambito" → rifiuto → END
 """
 
@@ -23,7 +27,15 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import ValidationError
 
-from assistente.controllo import DecisioneRouter, chiedi_strutturato, messaggi_router
+from assistente.controllo import (
+    DecisioneRouter,
+    EsitoRevisione,
+    chiedi_strutturato,
+    e_revisione,
+    indicazione_revisione,
+    messaggi_revisore,
+    messaggi_router,
+)
 
 # Lezione 6: da 10 a 16, perché anche router, revisore e riassunto consumano passaggi del grafo.
 LIMITE_PASSAGGI = 16
@@ -87,6 +99,12 @@ def instrada_router(state: StatoAgente) -> Literal["conversazione", "fuori_ambit
     return "fuori_ambito" if state.get("categoria") == "fuori_ambito" else "conversazione"
 
 
+def instrada_revisore(state: StatoAgente) -> Literal["modello", "__end__"]:
+    """Dopo il revisore: se ha lasciato un'indicazione si torna all'agente, altrimenti il turno finisce."""
+    messaggi = state["messages"]
+    return "modello" if messaggi and e_revisione(messaggi[-1]) else END
+
+
 def costruisci_grafo(
     modello: BaseChatModel,
     fuso_predefinito: str,
@@ -115,6 +133,29 @@ def costruisci_grafo(
     def nodo_rifiuto(state: StatoAgente) -> dict:
         log.info("rifiuto: richiesta fuori ambito, il nodo modello non viene eseguito")
         return {"messages": [AIMessage(risposta_rifiuto(opzioni.ambito))]}
+
+    def nodo_revisore(state: StatoAgente) -> dict:
+        esito = chiedi_strutturato(modello, EsitoRevisione, messaggi_revisore(state["messages"]))
+        if esito is None:
+            log.warning("revisore: giudizio non leggibile, la risposta viene accettata")
+            return {}
+        if esito.coerente:
+            log.info("revisore: coerente motivo=%s", esito.motivo)
+            return {}
+        fatte = state.get("revisioni", 0)
+        if fatte >= opzioni.limite_revisioni:
+            # Il limite sta nello stato (slide 5, punto 4): senza, un revisore severo non si fermerebbe mai.
+            log.warning(
+                "revisore: limite di revisioni raggiunto (%d), resta l'ultima risposta. motivo=%s",
+                opzioni.limite_revisioni, esito.motivo,
+            )
+            return {}
+        log.info(
+            "revisore: non coerente (revisione %d di %d) motivo=%s",
+            fatte + 1, opzioni.limite_revisioni, esito.motivo,
+        )
+        # Il motivo entra in cronologia: alla prossima chiamata l'agente lo legge e riscrive.
+        return {"messages": [indicazione_revisione(esito.motivo)], "revisioni": fatte + 1}
 
     def nodo_modello(state: StatoAgente) -> dict:
         # Il messaggio di sistema si ricostruisce a ogni chiamata e non entra nello stato.
@@ -171,6 +212,13 @@ def costruisci_grafo(
         ingresso = "router"
 
     grafo.add_edge(START, ingresso)
-    grafo.add_conditional_edges("modello", instrada, ["strumenti", END])
+    # Quando l'agente non chiede strumenti, `instrada` dice END: con il revisore acceso quel
+    # ramo porta al revisore, che decide se il turno finisce davvero.
+    dopo_modello = END
+    if opzioni.limite_revisioni > 0:
+        grafo.add_node("revisore", nodo_revisore)
+        grafo.add_conditional_edges("revisore", instrada_revisore, ["modello", END])
+        dopo_modello = "revisore"
+    grafo.add_conditional_edges("modello", instrada, {"strumenti": "strumenti", END: dopo_modello})
     grafo.add_edge("strumenti", "modello")
     return grafo.compile(checkpointer=checkpointer)

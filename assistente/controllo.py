@@ -108,3 +108,55 @@ def messaggi_router(ambito: str, riassunto: str, messaggi: list) -> list:
         parti.append(f"Riassunto della conversazione precedente: {riassunto}")
     parti.append("Ultimi scambi (la richiesta da valutare è l'ultima riga):\n" + trascrivi(scambi))
     return [SystemMessage(ISTRUZIONI_ROUTER.format(ambito=ambito)), HumanMessage("\n\n".join(parti))]
+
+
+# ---------------------------------------------------------------- revisore (step 2)
+
+class EsitoRevisione(BaseModel):
+    """Output strutturato del revisore (slide 5): coerente sì o no, e motivo."""
+
+    coerente: bool
+    motivo: str
+
+
+ISTRUZIONI_REVISORE = (
+    "Sei il revisore di un assistente. Ricevi la domanda dell'utente, gli eventuali risultati degli "
+    "strumenti e la risposta proposta. Controlla solo la COERENZA: la risposta deve affrontare tutte "
+    "le parti della domanda e non deviare dal tema.\n"
+    "Non verificare se i fatti sono veri: i risultati degli strumenti sono già corretti. Una parte "
+    "è affrontata anche quando la risposta riferisce che uno strumento ha dato errore.\n"
+    "Se la risposta è coerente rispondi `coerente: true`. Altrimenti `coerente: false` e nel motivo "
+    "scrivi in una frase, in italiano, che cosa manca o che cosa è fuori tema."
+)
+
+
+def messaggi_revisore(messaggi: list) -> list:
+    """Messaggi per il revisore: la domanda, i risultati degli strumenti del turno, la risposta proposta.
+
+    La domanda è l'ultimo messaggio scritto davvero dall'utente: le indicazioni del revisore
+    sono anch'esse HumanMessage, ma non sono domande. La risposta da valutare è sempre l'ultimo
+    messaggio, quindi dopo una bocciatura si valuta la risposta nuova e non la bozza scartata.
+    """
+    posizioni = [i for i, m in enumerate(messaggi) if isinstance(m, HumanMessage) and not e_revisione(m)]
+    inizio = posizioni[-1] if posizioni else 0
+    domanda = messaggi[inizio].content if posizioni else ""
+    risultati = [m for m in messaggi[inizio:] if isinstance(m, ToolMessage)]
+    parti = [f"Domanda dell'utente:\n{domanda}"]
+    if risultati:
+        parti.append("Risultati degli strumenti:\n" + trascrivi(risultati))
+    parti.append(f"Risposta proposta:\n{messaggi[-1].content}")
+    return [SystemMessage(ISTRUZIONI_REVISORE), HumanMessage("\n\n".join(parti))]
+
+
+def indicazione_revisione(motivo: str) -> HumanMessage:
+    """Messaggio con cui il motivo della bocciatura entra in cronologia (slide 5, punto 3).
+
+    È un messaggio «utente» e non «di sistema»: molti modelli locali accettano il messaggio di
+    sistema solo all'inizio della conversazione. Il motivo è anche in `additional_kwargs`, così
+    il terminale lo mostra senza doverlo ritagliare dal testo.
+    """
+    return HumanMessage(
+        f"{PREFISSO_REVISIONE} La risposta precedente non è coerente con la domanda: {motivo} "
+        "Riscrivi la risposta completa.",
+        additional_kwargs={"motivo": motivo},
+    )

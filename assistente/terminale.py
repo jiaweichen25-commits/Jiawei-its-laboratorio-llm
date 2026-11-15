@@ -68,6 +68,10 @@ def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
             for risultato in dati["strumenti"]["messages"]:
                 chiamata = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
                 uscita.riga(formatta_traccia(chiamata["name"], chiamata["args"], risultato.content))
+        elif "revisore" in dati:
+            # Un revisore che approva non scrive nulla nello stato: l'aggiornamento arriva vuoto.
+            for indicazione in (dati["revisore"] or {}).get("messages", []):
+                uscita.riga(f"[revisore] non coerente: {indicazione.additional_kwargs.get('motivo', '')}")
         elif "rifiuto" in dati:
             # Il rifiuto è un testo fisso: non arriva in streaming dal nodo modello, va stampato qui.
             uscita.riga(dati["rifiuto"]["messages"][-1].content)
