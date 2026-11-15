@@ -160,3 +160,38 @@ def indicazione_revisione(motivo: str) -> HumanMessage:
         "Riscrivi la risposta completa.",
         additional_kwargs={"motivo": motivo},
     )
+
+
+# ---------------------------------------------------------------- riassunto (step 3)
+
+ISTRUZIONI_RIASSUNTO = (
+    "Riassumi la conversazione tra un utente e un assistente. Scrivi in italiano, in poche frasi. "
+    "Conserva le informazioni che possono servire più avanti: nome e preferenze dell'utente, dati e "
+    "risultati importanti, richieste rimaste in sospeso. Scrivi i fatti sull'utente in forma "
+    "esplicita, per esempio «L'utente si chiama Anna.» (un modello piccolo li usa meglio così). "
+    "Se c'è un riassunto precedente, fondilo con "
+    "i messaggi nuovi in un unico testo. Non inventare nulla e scrivi solo il riassunto."
+)
+
+
+def punto_di_taglio(messaggi: list, conserva: int) -> int:
+    """Indice da cui parte la cronologia che resta: `messaggi[:i]` si riassume, `messaggi[i:]` si tiene.
+
+    Si parte da «gli ultimi `conserva`» e si arretra fino a una domanda dell'utente. Tagliare
+    solo davanti a una domanda garantisce che una richiesta di strumento non resti mai senza il
+    suo ToolMessage (slide 6, punto 4): le due cose stanno sempre dentro lo stesso turno.
+    Restituisce 0 quando un punto di taglio non c'è: in quel caso non si riassume.
+    """
+    for i in range(min(len(messaggi) - conserva, len(messaggi) - 1), 0, -1):
+        if isinstance(messaggi[i], HumanMessage) and not e_revisione(messaggi[i]):
+            return i
+    return 0
+
+
+def messaggi_riassunto(riassunto_precedente: str, vecchi: list) -> list:
+    """Messaggi per il nodo riassunto: il riassunto di prima (se c'è) e i messaggi da togliere."""
+    parti = []
+    if riassunto_precedente:
+        parti.append(f"Riassunto precedente:\n{riassunto_precedente}")
+    parti.append("Messaggi da riassumere:\n" + trascrivi(vecchi))
+    return [SystemMessage(ISTRUZIONI_RIASSUNTO), HumanMessage("\n\n".join(parti))]

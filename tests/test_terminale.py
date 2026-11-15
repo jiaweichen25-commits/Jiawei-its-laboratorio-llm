@@ -196,3 +196,22 @@ def test_revisione_mostrata_e_contatore_azzerato_al_turno_successivo():
     assert righe.index("Sono le 10.") < righe.index("[revisore] non coerente: manca il calcolo") < righe.index("Sono le 10 e fa 96.")
     assert "Ciao di nuovo." in righe  # al secondo turno il contatore è ripartito da zero
     assert "coerente\"" not in out.getvalue()  # il JSON del revisore non va mostrato
+
+
+def test_riassunto_mostrato_e_cronologia_coerente_dopo_un_turno_fallito():
+    richiesta = httpx.Request("POST", "http://localhost:1234/v1/chat/completions")
+    _, grafo = grafo_lezione6(
+        OpzioniGrafo(soglia_riassunto=4, messaggi_da_conservare=2),
+        AIMessage("r1"), AIMessage("r2"),
+        AIMessage("riassunto"), openai.APIConnectionError(request=richiesta),  # terzo turno: comprime, poi l'agente cade
+        AIMessage("r4"),
+    )
+    config = config_sessione()
+    out = io.StringIO()
+
+    conversa(grafo, config, lettore("d1", "d2", "d3", "d4"), out, descrivi_errore=descrivi_errore)
+
+    assert "[riassunto] cronologia compressa: 2 messaggi sostituiti" in out.getvalue().splitlines()
+    stato = grafo.get_state(config).values
+    assert [m.content for m in stato["messages"]] == ["d2", "r2", "d4", "r4"]  # del turno fallito non resta d3
+    assert stato["riassunto"] == "riassunto"

@@ -144,3 +144,21 @@ def test_revisore_reale_domanda_in_due_parti(cfg, strumenti_mcp):
 
     assert any(c["name"] == "orologio" for c in chiamate(messaggi)), messaggi
     assert "96" in risposta_finale(messaggi)
+
+
+def test_riassunto_reale_ricorda_il_nome(cfg, strumenti_mcp):
+    # Slide 6: un'informazione del primo turno deve restare utilizzabile dopo la compressione.
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    grafo = grafo_lezione6(
+        cfg, strumenti_mcp, checkpointer=InMemorySaver(), soglia_riassunto=4, messaggi_da_conservare=2
+    )
+    config = {"configurable": {"thread_id": "riassunto"}, "recursion_limit": LIMITE_PASSAGGI}
+    for domanda in ("Ciao, mi chiamo Jiawei.", "Che ore sono a Tokyo?", "Quanto fa 17 * 3?"):
+        grafo.invoke({"messages": [HumanMessage(domanda)], "revisioni": 0}, config)
+    stato = grafo.invoke({"messages": [HumanMessage("Come mi chiamo?")], "revisioni": 0}, config)
+
+    assert stato.get("riassunto"), "nessuna compressione avvenuta"
+    assert not any("Jiawei" in m.content for m in stato["messages"][:-1] if isinstance(m, HumanMessage)), \
+        "il primo turno è ancora in cronologia: la prova non dimostra nulla"
+    assert "Jiawei" in risposta_finale(stato["messages"])

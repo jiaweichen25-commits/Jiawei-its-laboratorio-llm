@@ -68,6 +68,11 @@ def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
             for risultato in dati["strumenti"]["messages"]:
                 chiamata = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
                 uscita.riga(formatta_traccia(chiamata["name"], chiamata["args"], risultato.content))
+        elif "riassunto" in dati:
+            # Sotto la soglia il nodo non scrive nulla; sopra, toglie i messaggi vecchi dallo stato.
+            tolti = len((dati["riassunto"] or {}).get("messages", []))
+            if tolti:
+                uscita.riga(f"[riassunto] cronologia compressa: {tolti} messaggi sostituiti")
         elif "revisore" in dati:
             # Un revisore che approva non scrive nulla nello stato: l'aggiornamento arriva vuoto.
             for indicazione in (dati["revisore"] or {}).get("messages", []):

@@ -2,7 +2,7 @@
 
 Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `its-laboratorio-llm/`.
 
-Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio), `grafo.py` (stato, nodi, instradamento), `modello.py` (collegamento a LM Studio), `terminale.py` (interfaccia), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
+Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio, opzioni dei nodi della lezione 6), `grafo.py` (stato, nodi, instradamento: riassunto → router → modello ⇄ strumenti → revisore, più rifiuto; i nodi della lezione 6 si accendono con `OpzioniGrafo`), `controllo.py` (prompt e output strutturato di router, revisore e riassunto), `modello.py` (collegamento a LM Studio), `terminale.py` (interfaccia), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
 
 Comandi (PowerShell, dalla cartella del progetto):
 
@@ -20,6 +20,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - conserva la cronologia della conversazione per la durata della sessione (nessuna persistenza);
 - offre uno strumento orologio con fuso orario esplicito, richiesto dal modello tramite tool calling ed eseguito davvero dal programma, raggiungibile in tre varianti (locale, FastAPI, FastMCP);
 - espone tramite un server MCP anche la calcolatrice sicura e il convertitore di unità (lezione 5);
+- rifiuta le domande fuori ambito, fa rivedere le risposte incomplete e riassume la cronologia lunga (lezione 6, step 1–3);
 - si avvia anche con Docker Compose.
 
 ## Confini

@@ -67,6 +67,34 @@ modello ─(nessuno strumento richiesto)→ revisore ─┬─ coerente, o limit
 
 Evidenze nei log: `revisore: coerente ...` oppure `revisore: non coerente (revisione 1 di 2) motivo=...`.
 
+### Step 3 · Riassunto della cronologia
+
+Il grafo completo, con tutti i nodi accesi:
+
+```
+START → riassunto → router ─┬─ conversazione → modello ⇄ strumenti
+                            │                     │ (nessuno strumento richiesto)
+                            │                     ▼
+                            │                  revisore ─┬─ coerente, o limite raggiunto → END
+                            │                            └─ non coerente + motivo → modello
+                            └─ fuori_ambito → rifiuto → END
+```
+
+- Il nodo `riassunto` è il primo del turno. Se la cronologia supera `SOGLIA_RIASSUNTO` messaggi (predefinito 12),
+  i messaggi vecchi vengono sostituiti da un riassunto e restano gli ultimi `MESSAGGI_DA_CONSERVARE` (predefinito 6).
+  Sotto la soglia il nodo non chiama il modello.
+- Il taglio cade sempre davanti a una domanda dell'utente: così una richiesta di strumento non viene mai separata dal
+  suo `ToolMessage`. Se non c'è un punto di taglio valido (per esempio un solo turno con molti strumenti) non si
+  riassume.
+- Il riassunto è un campo dello stato (`riassunto`) che viene sostituito a ogni compressione: il modello riceve il
+  riassunto precedente e lo fonde con i messaggi nuovi. Entra **in cima** al messaggio di sistema dell'agente ed è
+  passato anche al router. In coda alle istruzioni, nella prova reale, gemma lo ignorava e rispondeva di non sapere il
+  nome dell'utente; anche in cima un modello da 4B può ogni tanto rispondere così (vedi Limiti noti).
+- Se il modello restituisce un riassunto vuoto non si toglie nulla (log `WARNING`).
+
+Evidenze: nei log `riassunto: messaggi prima=14 dopo=6`; nel terminale `[riassunto] cronologia compressa: N messaggi
+sostituiti`.
+
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 
 ## Preparazione
@@ -171,8 +199,8 @@ Una risposta simulata non dimostra che il modello locale sappia usare lo strumen
 
 Lezione 6: `test_controllo.py` (output strutturato, trascrizione, messaggi del router) e `test_grafo_lezione6.py`
 (percorsi del grafo con le risposte di router e revisore simulate, compreso un revisore che rifiuta sempre e si ferma
-al limite). Prove reali in `test_reali.py`: router con domanda in ambito, fuori ambito e di seguito; revisore con una
-domanda in due parti.
+al limite, e il riassunto con il punto di taglio). Prove reali in `test_reali.py`: router con domanda in ambito, fuori
+ambito e di seguito; revisore con una domanda in due parti; riassunto che ricorda il nome dato al primo turno.
 
 ## Diagnosi
 
@@ -192,3 +220,10 @@ domanda in due parti.
 ## Limiti noti
 
 - I log su stderr si mescolano al testo in streaming (vedi Diagnosi).
+- Lezione 6: router e revisore aggiungono una chiamata al modello ciascuno, quindi ogni domanda richiede più tempo
+  (con gemma-4-e4b sulla macchina di prova da 10 a 35 secondi per chiamata).
+- Lezione 6: con un modello da 4B le risposte che dipendono dal riassunto non sono sempre affidabili; a volte il
+  modello risponde di non conoscere un'informazione che ha nel messaggio di sistema. Il codice passa il riassunto
+  correttamente (verificato catturando la richiesta inviata a LM Studio).
+- Il test `test_client_mcp.py::test_server_che_non_risponde_viene_terminato` (lezione 5) fallisce a intermittenza:
+  il processo di prova a volte resta vivo oltre i 5 secondi di attesa del test.

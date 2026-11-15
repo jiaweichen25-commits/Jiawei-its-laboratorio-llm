@@ -120,8 +120,9 @@ entrambi i casi un log `WARNING` con l'output ricevuto.
   di strumento non viene mai separata dal suo `ToolMessage`. Se non c'è un punto di taglio valido non si riassume.
 - Il modello riceve il riassunto precedente e i messaggi da togliere e produce il nuovo riassunto, in testo libero.
 - I messaggi vecchi escono dallo stato con `RemoveMessage`; `riassunto` è sostituito.
-- Il riassunto entra nel messaggio di sistema dell'agente («Riassunto della conversazione finora: …») ed è
-  passato anche al router.
+- Il riassunto entra in cima al messaggio di sistema dell'agente («Riassunto della conversazione finora: …»),
+  con l'istruzione di rispondere da lì alle domande su cose dette prima, ed è passato anche al router.
+  (Modifica dopo la prova reale: in coda alle istruzioni il modello locale lo ignorava.)
 - Log: `riassunto: messaggi prima=14 dopo=7`.
 
 ### Altro

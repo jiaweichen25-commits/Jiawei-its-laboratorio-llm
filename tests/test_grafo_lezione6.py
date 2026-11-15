@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from langgraph.checkpoint.memory import InMemorySaver
+
 from assistente.grafo import LIMITE_PASSAGGI, OpzioniGrafo, costruisci_grafo, risposta_rifiuto
 from assistente.strumenti import crea_orologio
 from tests.modello_finto import ModelloFinto
@@ -186,3 +188,162 @@ def test_router_e_revisore_insieme():
     modello, stato = esegui(opzioni, router("fuori_ambito"))
     assert stato["messages"][-1].content == risposta_rifiuto("data e ora")
     assert len(modello.ricevuti) == 1  # fuori ambito: né agente né revisore
+
+
+# ---------------------------------------------------------------- step 3: riassunto
+
+SOLO_RIASSUNTO = OpzioniGrafo(soglia_riassunto=4, messaggi_da_conservare=2)
+
+
+def sessione(opzioni, *risposte):
+    """Grafo con memoria, per più turni di seguito nella stessa sessione."""
+    modello = ModelloFinto(risposte=list(risposte))
+    grafo = costruisci_grafo(
+        modello, "Europe/Rome", strumenti=[crea_orologio(lambda: ISTANTE)],
+        checkpointer=InMemorySaver(), opzioni=opzioni,
+    )
+    config = {"configurable": {"thread_id": "t"}, "recursion_limit": LIMITE_PASSAGGI}
+
+    def turno(domanda):
+        return grafo.invoke({"messages": [HumanMessage(domanda)], "revisioni": 0}, config)
+
+    return modello, turno
+
+
+def test_sotto_soglia_non_chiama_il_modello_per_riassumere(caplog):
+    caplog.set_level(logging.INFO, logger="assistente")
+    modello, turno = sessione(OpzioniGrafo(soglia_riassunto=12), AIMessage("Piacere."), AIMessage("Jiawei."))
+
+    turno("Mi chiamo Jiawei")
+    stato = turno("Come mi chiamo?")
+
+    assert len(modello.ricevuti) == 2  # una chiamata per turno: solo l'agente
+    assert len(stato["messages"]) == 4 and not stato.get("riassunto")
+    assert "riassunto:" not in caplog.text
+
+
+def test_sopra_soglia_comprime(caplog):
+    caplog.set_level(logging.INFO, logger="assistente")
+    modello, turno = sessione(
+        SOLO_RIASSUNTO,
+        AIMessage("Piacere, Jiawei."), AIMessage("Sono le 10."),
+        AIMessage("L'utente si chiama Jiawei."),  # risposta del modello al nodo riassunto, al terzo turno
+        AIMessage("Ti chiami Jiawei."),
+    )
+
+    turno("Mi chiamo Jiawei")
+    turno("Che ore sono?")
+    stato = turno("Come mi chiamo?")  # 5 messaggi > soglia 4: il primo scambio viene riassunto
+
+    assert "riassunto: messaggi prima=5 dopo=3" in caplog.text
+    assert stato["riassunto"] == "L'utente si chiama Jiawei."
+    assert [m.content for m in stato["messages"]] == [
+        "Che ore sono?", "Sono le 10.", "Come mi chiamo?", "Ti chiami Jiawei.",
+    ]
+    sistema_agente = modello.ricevuti[-1][0]
+    assert "Riassunto della conversazione finora: L'utente si chiama Jiawei." in sistema_agente.content
+    assert [m.content for m in modello.ricevuti[-1][1:]] == ["Che ore sono?", "Sono le 10.", "Come mi chiamo?"]
+
+
+def test_il_riassunto_viene_sostituito_non_accumulato():
+    modello, turno = sessione(
+        SOLO_RIASSUNTO,
+        AIMessage("r1"), AIMessage("r2"),
+        AIMessage("riassunto uno"), AIMessage("r3"),
+        AIMessage("riassunto due"), AIMessage("r4"),
+    )
+
+    for domanda in ("d1", "d2", "d3"):
+        turno(domanda)
+    stato = turno("d4")
+
+    assert stato["riassunto"] == "riassunto due"
+    # Alla seconda compressione il modello riceve il riassunto precedente, da fondere con i messaggi nuovi.
+    assert "riassunto uno" in modello.ricevuti[-2][1].content
+
+
+def test_riassunto_vuoto_non_toglie_messaggi(caplog):
+    caplog.set_level(logging.INFO, logger="assistente")
+    _, turno = sessione(SOLO_RIASSUNTO, AIMessage("r1"), AIMessage("r2"), AIMessage("  "), AIMessage("r3"))
+
+    turno("d1")
+    turno("d2")
+    stato = turno("d3")
+
+    assert len(stato["messages"]) == 6 and not stato.get("riassunto")
+    assert "WARNING" in caplog.text
+
+
+def test_il_taglio_non_separa_richiesta_e_toolmessage():
+    _, turno = sessione(
+        SOLO_RIASSUNTO,
+        AIMessage("r1"),
+        chiamata("Asia/Tokyo"), AIMessage("Sono le 00:42"),
+        AIMessage("riassunto"), AIMessage("r3"),
+    )
+
+    turno("d1")
+    turno("Che ore sono a Tokyo?")
+    messaggi = turno("d3")["messages"]  # 7 messaggi: il taglio «ultimi 2» cadrebbe in mezzo al turno con lo strumento
+
+    richieste = {c["id"] for m in messaggi if isinstance(m, AIMessage) for c in m.tool_calls}
+    risultati = {m.tool_call_id for m in messaggi if isinstance(m, ToolMessage)}
+    assert richieste == risultati
+    assert isinstance(messaggi[0], HumanMessage)
+
+
+def test_turno_unico_senza_punto_di_taglio_non_riassume():
+    # Primo turno con tre strumenti: 8 messaggi e una sola domanda. Al secondo turno la cronologia
+    # supera la soglia, ma l'unico punto di taglio possibile lascerebbe fuori troppo poco: non si riassume.
+    risposte = [chiamata("Asia/Tokyo", id=f"c{i}") for i in range(3)] + [AIMessage("Fatto."), AIMessage("r2")]
+    modello, turno = sessione(SOLO_RIASSUNTO, *risposte)
+
+    turno("Che ore sono a Tokyo? Controlla tre volte.")
+    stato = turno("d2")
+
+    assert len(stato["messages"]) == 10 and not stato.get("riassunto")
+    assert modello.risposte == []
+
+
+def test_tre_nodi_insieme_nell_ordine_riassunto_router_agente_revisore():
+    opzioni = OpzioniGrafo(ambito="data e ora", limite_revisioni=2, soglia_riassunto=4, messaggi_da_conservare=2)
+    modello, turno = sessione(
+        opzioni,
+        router("conversazione"), AIMessage("r1"), revisore(True),
+        router("conversazione"), AIMessage("r2"), revisore(True),
+        AIMessage("L'utente si chiama Jiawei."), router("conversazione"), AIMessage("Ti chiami Jiawei."), revisore(True),
+    )
+
+    turno("Mi chiamo Jiawei")
+    turno("d2")
+    stato = turno("Come mi chiamo?")
+
+    assert stato["messages"][-1].content == "Ti chiami Jiawei." and modello.risposte == []
+    assert stato["riassunto"] == "L'utente si chiama Jiawei."
+    # Il router del terzo turno riceve il riassunto: senza, non saprebbe più di che cosa si parlava.
+    assert "L'utente si chiama Jiawei." in modello.ricevuti[-3][1].content
+
+
+def test_il_riassunto_sta_in_cima_al_messaggio_di_sistema():
+    # Prova reale fallita: con il riassunto in coda alle istruzioni il modello locale lo ignorava.
+    # Slide 7: il contesto preparato dall'host va «meglio in cima» al prompt di sistema.
+    from assistente.grafo import messaggio_sistema
+
+    testo = messaggio_sistema("Europe/Rome", "L'utente si chiama Jiawei.").content
+
+    assert testo.index("L'utente si chiama Jiawei.") < testo.index("Rispondi in italiano.")
+    assert "usa" in testo[: testo.index("Rispondi in italiano.")].lower()  # istruzione esplicita a usarlo
+
+
+def test_senza_riassunto_il_messaggio_di_sistema_non_cambia():
+    from assistente.grafo import messaggio_sistema
+
+    assert messaggio_sistema("Europe/Rome").content.startswith("Rispondi in italiano.")
+
+
+def test_l_agente_e_invitato_a_rispondere_dal_riassunto():
+    from assistente.grafo import messaggio_sistema
+
+    testo = messaggio_sistema("Europe/Rome", "L'utente si chiama Jiawei.").content
+
+    assert "detto prima" in testo

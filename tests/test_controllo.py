@@ -11,7 +11,9 @@ from assistente.controllo import (
     e_revisione,
     indicazione_revisione,
     messaggi_revisore,
+    messaggi_riassunto,
     messaggi_router,
+    punto_di_taglio,
     trascrivi,
 )
 from tests.modello_finto import ModelloFinto
@@ -127,3 +129,43 @@ def test_indicazione_revisione():
 
     assert e_revisione(indicazione)
     assert "manca il calcolo" in indicazione.content
+
+
+# ---------------------------------------------------------------- riassunto
+
+def cronologia_da(tipi):
+    """H = utente, A = assistente con testo, C = richiesta di strumento, T = risultato, R = indicazione del revisore."""
+    fabbrica = {
+        "H": lambda i: HumanMessage(f"domanda {i}"),
+        "A": lambda i: AIMessage(f"risposta {i}"),
+        "C": lambda i: AIMessage("", tool_calls=[{"name": "orologio", "args": {}, "id": f"c{i}"}]),
+        "T": lambda i: ToolMessage("10:00", tool_call_id=f"c{i - 1}", name="orologio"),
+        "R": lambda i: indicazione_revisione("manca una parte"),
+    }
+    return [fabbrica[t](i) for i, t in enumerate(tipi)]
+
+
+@pytest.mark.parametrize("tipi, conserva, atteso", [
+    ("HAHAHAHA", 4, 4),   # il taglio cade proprio su una domanda
+    ("HAHCTAHA", 4, 2),   # in posizione 4 c'è un ToolMessage: si arretra alla domanda in posizione 2
+    ("HCTCTCTA", 4, 0),   # un solo turno pieno di strumenti: nessun punto di taglio
+    ("HARAHA", 3, 0),     # l'indicazione del revisore non è un punto di taglio
+    ("HA", 6, 0),         # meno messaggi di quelli da conservare
+])
+def test_punto_di_taglio(tipi, conserva, atteso):
+    assert punto_di_taglio(cronologia_da(tipi), conserva) == atteso
+
+
+def test_messaggi_riassunto_contiene_riassunto_precedente_e_messaggi():
+    sistema, utente = messaggi_riassunto("L'utente si chiama Jiawei.", cronologia_da("HCTA"))
+
+    assert isinstance(sistema, SystemMessage)
+    assert "L'utente si chiama Jiawei." in utente.content
+    assert "Utente: domanda 0" in utente.content and "Strumento orologio: 10:00" in utente.content
+
+
+def test_il_riassunto_chiede_i_fatti_sull_utente_in_forma_esplicita():
+    # Prova reale: con «L'utente Jiawei ha...» gemma a volte rispondeva di non sapere il nome.
+    sistema, _ = messaggi_riassunto("", cronologia_da("HA"))
+
+    assert "L'utente si chiama" in sistema.content

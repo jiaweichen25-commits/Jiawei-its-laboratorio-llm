@@ -7,12 +7,12 @@ Senza opzioni è il grafo delle lezioni 4 e 5:
 
 La lezione 6 aggiunge nodi che si accendono con `OpzioniGrafo` (un nodo spento non esiste nel grafo):
 
-    START → router ─instrada_router()─┬─ "conversazione" → modello ⇄ strumenti
-                                      │                        │ (nessuno strumento richiesto)
-                                      │                        ▼
-                                      │                     revisore ─instrada_revisore()─┬─ END
-                                      │                                                   └─ modello
-                                      └─ "fuori_ambito" → rifiuto → END
+    START → riassunto → router ─instrada_router()─┬─ "conversazione" → modello ⇄ strumenti
+                                                  │                        │ (nessuno strumento richiesto)
+                                                  │                        ▼
+                                                  │                     revisore ─instrada_revisore()─┬─ END
+                                                  │                                                   └─ modello
+                                                  └─ "fuori_ambito" → rifiuto → END
 """
 
 import logging
@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import ValidationError
@@ -34,7 +34,9 @@ from assistente.controllo import (
     e_revisione,
     indicazione_revisione,
     messaggi_revisore,
+    messaggi_riassunto,
     messaggi_router,
+    punto_di_taglio,
 )
 
 # Lezione 6: da 10 a 16, perché anche router, revisore e riassunto consumano passaggi del grafo.
@@ -75,15 +77,26 @@ def config_sessione() -> dict:
     return {"configurable": {"thread_id": "sessione"}, "recursion_limit": LIMITE_PASSAGGI}
 
 
-def messaggio_sistema(fuso: str) -> SystemMessage:
+def messaggio_sistema(fuso: str, riassunto: str = "") -> SystemMessage:
+    # Lezione 6, step 3: il riassunto dei messaggi tolti dalla cronologia entra qui, IN CIMA alle
+    # istruzioni, con l'indicazione esplicita di usarlo. Prova reale: messo in coda, gemma lo
+    # ignorava e rispondeva «non so come ti chiami» (la slide 7 dice infatti «meglio in cima»).
+    testa = (
+        f"Riassunto della conversazione finora: {riassunto}\n"
+        "Usa queste informazioni per rispondere: valgono come se fossero ancora nella conversazione. "
+        "Se l'utente chiede qualcosa che ha detto prima, per esempio il suo nome, rispondi da qui.\n\n"
+        if riassunto else ""
+    )
     return SystemMessage(
-        "Rispondi in italiano. Per conoscere data o ora usa sempre lo strumento `orologio`, "
+        testa
+        + "Rispondi in italiano. Per conoscere data o ora usa sempre lo strumento `orologio`, "
         f"senza inventarle. Se l'utente non indica un fuso orario, usa `{fuso}`. "
         # Lezione 5: i due tool MCP aggiunti (slide 25). Senza questa frase un modello piccolo
         # tende a fare i conti «a mente» invece di chiamare lo strumento.
         "Per i calcoli usa sempre lo strumento `calcola` e per le conversioni di unità lo "
         "strumento `converti`, senza fare i conti a mente. Se uno strumento restituisce un "
         "errore, riferiscilo all'utente senza inventare un risultato."
+        
     )
 
 
@@ -114,6 +127,25 @@ def costruisci_grafo(
 ):
     llm = modello.bind_tools(list(strumenti)) if strumenti else modello
     per_nome = {s.name: s for s in strumenti}
+
+    def nodo_riassunto(state: StatoAgente) -> dict:
+        messaggi = state["messages"]
+        if len(messaggi) <= opzioni.soglia_riassunto:
+            return {}  # sotto la soglia non si chiama il modello (slide 6, evidenze)
+        taglio = punto_di_taglio(messaggi, opzioni.messaggi_da_conservare)
+        if taglio == 0:
+            log.info("riassunto: %d messaggi ma nessun punto di taglio valido, cronologia invariata", len(messaggi))
+            return {}
+        vecchi = messaggi[:taglio]
+        testo = modello.invoke(messaggi_riassunto(state.get("riassunto", ""), vecchi)).content
+        if not isinstance(testo, str) or not testo.strip():
+            # Senza riassunto i messaggi vecchi sono l'unica memoria: non si toglie nulla.
+            log.warning("riassunto: il modello ha restituito un testo vuoto, cronologia invariata")
+            return {}
+        log.info("riassunto: messaggi prima=%d dopo=%d", len(messaggi), len(messaggi) - taglio)
+        # `riassunto` viene SOSTITUITO (il testo nuovo contiene già quello vecchio, fuso dal modello);
+        # RemoveMessage toglie dallo stato i messaggi ormai riassunti.
+        return {"riassunto": testo.strip(), "messages": [RemoveMessage(id=m.id) for m in vecchi]}
 
     def nodo_router(state: StatoAgente) -> dict:
         # Usa `modello` e non `llm`: il router non riceve gli strumenti, perché non spetta a lui
@@ -161,7 +193,8 @@ def costruisci_grafo(
         # Il messaggio di sistema si ricostruisce a ogni chiamata e non entra nello stato.
         log.info("modello: inizio chiamata")
         inizio = time.perf_counter()
-        risposta = llm.invoke([messaggio_sistema(fuso_predefinito), *state["messages"]])
+        sistema = messaggio_sistema(fuso_predefinito, state.get("riassunto", ""))
+        risposta = llm.invoke([sistema, *state["messages"]])
         log.info(
             "modello: fine chiamata (%.1f s, tool_calls=%d)",
             time.perf_counter() - inizio,
@@ -210,6 +243,12 @@ def costruisci_grafo(
         )
         grafo.add_edge("rifiuto", END)
         ingresso = "router"
+
+    if opzioni.soglia_riassunto > 0:
+        # Il riassunto è il primo nodo del turno: gli altri lavorano già sulla cronologia accorciata.
+        grafo.add_node("riassunto", nodo_riassunto)
+        grafo.add_edge("riassunto", ingresso)
+        ingresso = "riassunto"
 
     grafo.add_edge(START, ingresso)
     # Quando l'agente non chiede strumenti, `instrada` dice END: con il revisore acceso quel
