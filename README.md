@@ -22,7 +22,7 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
 `strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
-`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `backend/` (`app.py`, `archivio.py`, `agente_http.py`, `config.py`, `requirements.txt`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -172,7 +172,9 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
    `LOG_LEVEL` (facoltativa), `VARIANTE_OROLOGIO` (`locale`, `fastapi` o `mcp`; facoltativa, predefinita `mcp`),
    `OROLOGIO_API_URL` (solo per `fastapi`; predefinito `http://localhost:8000`). Lezione 6, tutte facoltative:
    `AMBITO_AGENTE` (di che cosa si occupa l'agente), `LIMITE_REVISIONI` (predefinito 2; 0 spegne il revisore),
-   `SOGLIA_RIASSUNTO` (predefinito 12 messaggi; 0 spegne il riassunto), `MESSAGGI_DA_CONSERVARE` (predefinito 6).
+   `SOGLIA_RIASSUNTO` (predefinito 12 messaggi; 0 spegne il riassunto), `MESSAGGI_DA_CONSERVARE` (predefinito 6),
+   `PREFERENZE_FILE`, `AGENTE_URL` e `AGENTE_TIMEOUT` (CLI e back-end). Per il back-end (step 7): `POSTGRES_USER`,
+   `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`, con una password a scelta.
 
 3. In LM Studio carica un modello e avvia il server locale. Leggi gli ID disponibili e copia quello scelto in
    `LM_MODEL` nel file `.env` (l'ID è quello restituito dal server, non va inventato):
@@ -248,6 +250,58 @@ Errori:
 
 Un errore di uno strumento (per esempio un fuso inesistente) non è un errore HTTP: il modello lo riceve e lo riferisce.
 
+### Step 7 · Back-end: API e salvataggio delle chat
+
+```
+front-end (step 8) ──HTTP──▶ back-end (porta 8002) ──HTTP──▶ agente (porta 8001) ──▶ LM Studio
+                                  │
+                                  ▼
+                             PostgreSQL (chat e messaggi, container, porta 5434)
+```
+
+Il back-end (cartella `backend/`) è l'unico punto di contatto del front-end. Non importa nulla da `assistente/`: i
+due componenti si parlano solo via HTTP. Avvio, con il servizio dell'agente già attivo:
+
+```powershell
+docker compose up -d postgres
+.\.venv\Scripts\python.exe -m uvicorn backend.app:app --port 8002
+```
+
+Documentazione OpenAPI interattiva su `http://localhost:8002/docs`.
+
+| Operazione | Endpoint | Risposta |
+|---|---|---|
+| Creare una chat | `POST /chat` | 201, la chat con il suo `id` |
+| Elencare le chat | `GET /chat` | titolo, `aggiornata_il` (data dell'ultimo messaggio) e numero di messaggi, dalla più recente |
+| Leggere una chat | `GET /chat/{id}` | la chat con i messaggi in ordine cronologico |
+| Inviare un messaggio | `POST /chat/{id}/messaggi` con `{"testo": "..."}` | `domanda`, `risposta` (con gli `strumenti` usati) e la `chat` aggiornata |
+| Eliminare una chat | `DELETE /chat/{id}` | 204; spariscono anche i suoi messaggi |
+| Stato | `GET /stato` | `backend`, `database`, `agente`: 200 se tutto è `ok`, altrimenti 503 |
+
+- Dati: tabelle `chat` e `messaggio`, create all'avvio se mancano (SQLAlchemy; `backend/archivio.py`). I dati stanno nel
+  volume Docker `dati_postgres`, quindi restano dopo `docker compose down` e dopo il riavvio.
+- Il titolo è «Nuova chat» fino alla prima domanda, poi i suoi primi 60 caratteri.
+- **Agente non raggiungibile:** domanda e risposta si salvano insieme, solo dopo che l'agente ha risposto. Se l'agente
+  è spento o troppo lento il back-end risponde 503 «Agente non raggiungibile: il messaggio non è stato salvato,
+  riprova.» e la chat resta com'era. Se l'agente risponde con un errore (per esempio LM Studio spento) il codice è
+  502 e il messaggio riporta quello dell'agente.
+- **Riassunto:** il database conserva tutti i messaggi, quindi la chat si vede sempre intera. All'agente vanno il
+  riassunto e solo i messaggi che il riassunto non copre.
+- Credenziali del database solo nel file `.env` (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL`).
+- La porta di PostgreSQL sul computer è 5434 perché sulla macchina di sviluppo 5432 e 5433 sono occupate.
+
+Altri errori: chat inesistente → 404 «Chat non trovata.»; testo vuoto → 422; database spento → 503 «Database non
+raggiungibile.».
+
+Prova da PowerShell:
+
+```powershell
+$chat = Invoke-RestMethod http://localhost:8002/chat -Method Post
+$corpo = @{ testo = "Che ore sono a Tokyo?" } | ConvertTo-Json
+Invoke-RestMethod "http://localhost:8002/chat/$($chat.id)/messaggi" -Method Post -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($corpo))
+Invoke-RestMethod http://localhost:8002/chat
+```
+
 ### Variante `fastapi` dell'orologio (lezione 5)
 
 Il servizio dell'orologio va avviato a parte, in un altro terminale:
@@ -261,12 +315,13 @@ Prova diretta: `Invoke-RestMethod "http://localhost:8000/orologio?fuso=Asia/Toky
 
 ## Avvio con Docker Compose
 
-Dallo step 6 il container esegue il **servizio dell'agente** sulla porta 8001; la CLI gira sul computer host. LM Studio
+`compose.yaml` contiene due servizi: `agente` (step 6) e `postgres` (step 7); il back-end gira ancora in locale.
+Il container `agente` esegue il **servizio dell'agente** sulla porta 8001; la CLI gira sul computer host. LM Studio
 resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (impostato in `compose.yaml`). Serve
 il file `.env` della sezione Preparazione. Il server MCP parte come sottoprocesso dentro lo stesso container.
 
 ```powershell
-docker compose up -d --build
+docker compose up -d --build agente
 Invoke-RestMethod http://localhost:8001/stato
 .\.venv\Scripts\python.exe -m assistente
 docker compose logs -f agente     # i log del grafo, in un altro terminale
@@ -306,6 +361,10 @@ Step 4–5: `test_preferenze.py` (validazione e valori predefiniti), `test_coman
 `/prompt`), resource e prompt in `test_server_mcp.py` e `test_client_mcp.py`, comandi in `test_terminale.py`. Prove
 reali: fuso `America/New_York` e lingua inglese da un file di preferenze temporaneo; `spiega` attraverso router e
 revisore; `riassumi_conversazione` dopo due turni.
+Step 6: `test_agente.py`, `test_servizio_agente.py`, `test_cliente_agente.py`, `test_terminale.py`. Step 7:
+`test_backend.py` (database SQLite in memoria e agente simulato con `httpx.MockTransport`: le cinque operazioni,
+errori, riassunto, persistenza su file) e `test_backend_reali.py` (marker `docker`: PostgreSQL vero, chat presente
+dopo il riavvio del back-end e del container; marker `lmstudio`: back-end → agente → LM Studio con l'orologio).
 
 ## Diagnosi
 

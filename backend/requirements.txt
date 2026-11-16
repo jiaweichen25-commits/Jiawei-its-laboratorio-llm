@@ -1,0 +1,9 @@
+# Dipendenze del solo back-end (lezione 6, step 7): serviranno al suo Dockerfile allo step 9.
+fastapi==0.162.2
+uvicorn==0.54.0
+httpx==0.28.1
+python-dotenv==1.2.4
+# Tabelle e interrogazioni: lo stesso codice gira su PostgreSQL e, nei test, su SQLite.
+sqlalchemy==2.1.8
+# Driver PostgreSQL usato da SQLAlchemy (postgresql+psycopg://...).
+psycopg[binary]==3.3.9

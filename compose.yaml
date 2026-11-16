@@ -1,6 +1,7 @@
-# Lezione 6, step 6: il container esegue il SERVIZIO dell'agente (non più la CLI).
-# La CLI gira sul computer host e lo raggiunge su http://localhost:8001.
-# Lo step 9 aggiungerà front-end, back-end e PostgreSQL e smetterà di pubblicare questa porta.
+# Lezione 6. Servizi presenti finora:
+#   agente    (step 6) il servizio HTTP dell'agente, porta 8001
+#   postgres  (step 7) il database delle chat, usato dal back-end
+# Il back-end in questo step gira in locale con uvicorn; lo step 9 porterà tutto a quattro container.
 services:
   agente:
     build: .
@@ -11,3 +12,27 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "8001:8001"
+
+  postgres:
+    image: postgres:17
+    # Le credenziali arrivano dal file .env (escluso da Git): qui ci sono solo i nomi delle variabili.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      # 5434 sul computer → 5432 nel container: sulla macchina di sviluppo 5432 e 5433 sono già occupate
+      # (PostgreSQL installato su Windows e database di un altro progetto).
+      - "5434:5432"
+    volumes:
+      # Volume con nome: i dati sopravvivono a `docker compose down` e al riavvio del container.
+      - dati_postgres:/var/lib/postgresql/data
+    healthcheck:
+      # «Sano» solo quando PostgreSQL accetta connessioni: servirà allo step 9 per far partire dopo il back-end.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  dati_postgres:
