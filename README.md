@@ -21,8 +21,8 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 | `mcp` (predefinita) | server FastMCP (stdio) + client che legge il catalogo (`tools/list`) e lo adatta in tool LangChain | `server_mcp.py`, `client_mcp.py` |
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
-`strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`), `tests/`,
-`Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
+`preferenze.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -94,6 +94,35 @@ START → riassunto → router ─┬─ conversazione → modello ⇄ strumenti
 
 Evidenze: nei log `riassunto: messaggi prima=14 dopo=6`; nel terminale `[riassunto] cronologia compressa: N messaggi
 sostituiti`.
+
+### Tre primitive MCP, tre responsabili (slide 11)
+
+| Primitiva | Chi la attiva | Quando | Nel progetto | Nei log |
+|---|---|---|---|---|
+| Tool | il modello | durante il ciclo, quando serve | `orologio`, `calcola`, `converti` | `strumenti: richiesta ...` a ogni chiamata |
+| Resource | l'applicazione (host) | una volta, prima della prima domanda | `utente://preferenze` (step 4) | `mcp: resources/read utente://preferenze` |
+| Prompt | l'utente | quando scrive `/prompt` | `spiega`, `riassumi_conversazione` (step 5) | `mcp: prompts/get ...` |
+
+### Step 4 · Resource: preferenze dell'utente
+
+- Il file `preferenze.json` nella cartella del progetto contiene lingua delle risposte, fuso orario predefinito e stile
+  (`sintetico` o `dettagliato`):
+
+  ```json
+  {"lingua": "italiano", "fuso_predefinito": "Europe/Rome", "stile": "sintetico"}
+  ```
+
+- Il server MCP lo espone come resource `utente://preferenze`. All'avvio l'applicazione la legge una volta e la mette
+  in cima al messaggio di sistema. La resource non è un tool: il modello non la vede tra gli strumenti e non la
+  «chiama».
+- Per cambiare il comportamento si modifica il file e si avvia una nuova sessione, senza toccare il codice.
+- Il fuso di `preferenze.json` ha la precedenza su `TZ_PREDEFINITO`, che resta il valore di riserva.
+- File mancante, JSON non valido, fuso inesistente o stile sconosciuto: l'agente parte con i valori predefiniti
+  (`italiano`, `TZ_PREDEFINITO`, `sintetico`) e nei log compare `WARNING preferenze: non utilizzabili (...)`.
+- Per provare un altro file senza toccare quello del progetto: `$env:PREFERENZE_FILE = "C:\percorso\prova.json"`.
+
+Evidenze nei log all'avvio: `mcp: resources/read utente://preferenze → {...}` e
+`preferenze: lingua=... fuso=... stile=...`, separate dalle righe `strumenti:` dei tool.
 
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 

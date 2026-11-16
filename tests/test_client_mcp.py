@@ -155,3 +155,34 @@ def test_server_che_non_risponde_viene_terminato(tmp_path):
             break
         time.sleep(0.25)
     assert not processo_vivo(pid)
+
+
+# ---------------------------------------------------------------- lezione 6, step 4: resource
+
+def test_leggi_risorsa(tmp_path):
+    from assistente.server_mcp import URI_PREFERENZE
+
+    file = tmp_path / "preferenze.json"
+    file.write_text('{"stile": "dettagliato"}', encoding="utf-8")
+    with ClienteMCP(crea_server(lambda: ISTANTE, percorso_preferenze=file)) as c:
+        assert c.leggi_risorsa(URI_PREFERENZE) == '{"stile": "dettagliato"}'
+        # La resource non diventa un tool: l'adattatore converte solo tools/list (slide 8, punto 3).
+        assert {s.name for s in crea_strumenti_mcp(c)} == {"orologio", "calcola", "converti"}
+
+
+def test_leggi_risorsa_inesistente_e_errore_di_collegamento(cliente):
+    with pytest.raises(ErroreCollegamentoMCP, match="utente://manca"):
+        cliente.leggi_risorsa("utente://manca")
+
+
+def test_il_server_stdio_legge_il_file_indicato_da_PREFERENZE_FILE(tmp_path, monkeypatch):
+    # Il server è un sottoprocesso: la variabile deve arrivargli, altrimenti leggerebbe sempre
+    # il preferenze.json del progetto.
+    from assistente.server_mcp import URI_PREFERENZE
+
+    file = tmp_path / "prova.json"
+    file.write_text('{"lingua": "inglese"}', encoding="utf-8")
+    monkeypatch.setenv("PREFERENZE_FILE", str(file))
+
+    with ClienteMCP(trasporto_stdio()) as c:
+        assert c.leggi_risorsa(URI_PREFERENZE) == '{"lingua": "inglese"}'

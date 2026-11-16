@@ -22,6 +22,7 @@ Soluzione:
 
 import asyncio
 import logging
+import os
 import sys
 import threading
 from functools import partial
@@ -52,10 +53,15 @@ def trasporto_stdio(modulo: str = "assistente.server_mcp") -> StdioTransport:
     """
     # keep_alive=False: quando la sessione si chiude, anche il sottoprocesso del server termina
     # (il valore predefinito di FastMCP lo lascerebbe vivo tra una connessione e l'altra).
+    # Lezione 6, step 4: la libreria MCP passa al sottoprocesso solo poche variabili d'ambiente
+    # «sicure» (PATH, HOME...). PREFERENZE_FILE va passata esplicitamente, altrimenti il server
+    # leggerebbe sempre il preferenze.json del progetto (verificato con un test).
+    ambiente = {"PREFERENZE_FILE": os.environ["PREFERENZE_FILE"]} if os.environ.get("PREFERENZE_FILE") else None
     return StdioTransport(
         command=sys.executable,
         args=["-m", modulo],
         cwd=str(RADICE_PROGETTO),
+        env=ambiente,
         keep_alive=False,
         log_file=FILE_LOG_SERVER,
     )
@@ -143,6 +149,33 @@ class ClienteMCP:
         self.chiudi()
 
     # ------------------------------------------------------------------ catalogo e chiamate
+
+    def _esegui(self, coroutine):
+        """Esegue una coroutine sul loop del thread di servizio e ne aspetta il risultato."""
+        if self._client is None or self._loop is None:
+            raise ErroreCollegamentoMCP("la sessione con il server non è attiva")
+        futura = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+        try:
+            return futura.result(self._timeout)
+        except Exception as exc:
+            futura.cancel()
+            raise ErroreCollegamentoMCP(f"{type(exc).__name__}: {exc}") from exc
+
+    def leggi_risorsa(self, uri: str) -> str:
+        """Lezione 6, step 4: resources/read. Restituisce il testo della resource.
+
+        La chiama l'host (non il modello), una volta, prima della prima domanda (slide 11).
+        """
+        if self._client is None:
+            raise ErroreCollegamentoMCP("la sessione con il server non è attiva")
+        try:
+            contenuti = self._esegui(self._client.read_resource(uri))
+        except ErroreCollegamentoMCP as exc:
+            raise ErroreCollegamentoMCP(f"lettura di {uri} fallita: {exc}") from exc
+        testo = "\n".join(c.text for c in contenuti if getattr(c, "text", None) is not None)
+        # Log separato da quelli dei tool: nella traccia si vede che la resource non è una chiamata del modello.
+        log.info("mcp: resources/read %s → %s", uri, testo)
+        return testo
 
     def catalogo(self) -> list:
         """Le voci ottenute con tools/list: ognuna ha name, description e input_schema."""

@@ -347,3 +347,49 @@ def test_l_agente_e_invitato_a_rispondere_dal_riassunto():
     testo = messaggio_sistema("Europe/Rome", "L'utente si chiama Jiawei.").content
 
     assert "detto prima" in testo
+
+
+# ---------------------------------------------------------------- step 4: preferenze dalla resource
+
+def test_preferenze_in_cima_al_messaggio_di_sistema_prima_del_riassunto():
+    from assistente.grafo import messaggio_sistema
+    from assistente.preferenze import Preferenze
+
+    preferenze = Preferenze(lingua="inglese", fuso_predefinito="America/New_York", stile="dettagliato")
+    testo = messaggio_sistema("Europe/Rome", "L'utente si chiama Jiawei.", preferenze).content
+
+    assert testo.startswith("Preferenze dell'utente")
+    assert testo.index("Preferenze dell'utente") < testo.index("Riassunto della conversazione")
+    assert "inglese" in testo and "America/New_York" in testo
+    assert "Europe/Rome" not in testo  # il fuso delle preferenze sostituisce quello di riserva
+    assert "Rispondi in inglese." in testo
+
+
+def test_senza_preferenze_il_messaggio_di_sistema_e_quello_di_prima():
+    from assistente.grafo import messaggio_sistema
+
+    assert messaggio_sistema("Europe/Rome").content.startswith("Rispondi in italiano. Per conoscere data o ora")
+
+
+def test_lo_stile_cambia_la_frase():
+    from assistente.grafo import messaggio_sistema
+    from assistente.preferenze import Preferenze
+
+    sintetico = messaggio_sistema("UTC", "", Preferenze(fuso_predefinito="UTC", stile="sintetico")).content
+    dettagliato = messaggio_sistema("UTC", "", Preferenze(fuso_predefinito="UTC", stile="dettagliato")).content
+
+    assert "brevi" in sintetico and "brevi" not in dettagliato
+    assert "spiegazione" in dettagliato
+
+
+def test_il_grafo_passa_le_preferenze_al_modello():
+    from assistente.preferenze import Preferenze
+
+    modello = ModelloFinto(risposte=[AIMessage("Hi!")])
+    preferenze = Preferenze(lingua="inglese", fuso_predefinito="America/New_York")
+    grafo = costruisci_grafo(modello, "Europe/Rome", preferenze=preferenze)
+
+    grafo.invoke({"messages": [HumanMessage("ciao")]})
+
+    sistema = modello.ricevuti[0][0].content
+    assert "America/New_York" in sistema and "inglese" in sistema

@@ -4,6 +4,8 @@ Ruolo MCP: questo è il SERVER. Espone tre tool (le «capacità»):
   - orologio  (slide 17: la stessa capacità delle altre due varianti)
   - calcola   (slide 25: calcolatrice sicura)
   - converti  (slide 25: convertitore di unità)
+e, dalla lezione 6, una RESOURCE:
+  - utente://preferenze  (step 4: il contenuto di preferenze.json, letto dall'host all'avvio)
 
 Il CONTRATTO di ogni tool (nome, descrizione, schema JSON degli argomenti) viene generato da
 FastMCP leggendo la firma e la docstring delle funzioni, e il client lo ottiene con tools/list
@@ -16,8 +18,10 @@ stdout è riservato al protocollo, i log vanno su stderr.
 Avvio manuale (di solito lo avvia il client):  python -m assistente.server_mcp
 """
 
+import os
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated
 
 from fastmcp import FastMCP
@@ -26,11 +30,32 @@ from pydantic import Field
 
 from assistente import logica
 from assistente.logica import ErroreStrumento, Unita, ora_utc
+from assistente.preferenze import URI_PREFERENZE
 
 
-def crea_server(adesso: Callable[[], datetime] = ora_utc) -> FastMCP:
-    """Costruisce il server con i tre tool. `adesso` si sostituisce nei test con un istante fisso."""
+def percorso_preferenze_predefinito() -> Path:
+    """File delle preferenze: PREFERENZE_FILE se impostata, altrimenti preferenze.json nel progetto.
+
+    Il server è un sottoprocesso che eredita le variabili d'ambiente dell'agente: così una
+    prova può puntare a un file temporaneo senza toccare quello del progetto.
+    """
+    personalizzato = os.environ.get("PREFERENZE_FILE", "").strip()
+    return Path(personalizzato) if personalizzato else Path(__file__).resolve().parent.parent / "preferenze.json"
+
+
+def crea_server(adesso: Callable[[], datetime] = ora_utc, percorso_preferenze: Path | None = None) -> FastMCP:
+    """Costruisce il server. `adesso` e `percorso_preferenze` si sostituiscono nei test."""
     mcp = FastMCP("Strumenti ITS")
+    file_preferenze = percorso_preferenze or percorso_preferenze_predefinito()
+
+    # Lezione 6, step 4 — RESOURCE (slide 7): un contenuto identificato da un URI. A differenza di un
+    # tool non la sceglie il modello: è l'host a leggerla (resources/read) prima della conversazione.
+    # Il file si rilegge a ogni lettura: basta modificarlo e aprire una nuova sessione.
+    @mcp.resource(URI_PREFERENZE, name="preferenze", mime_type="application/json")
+    def preferenze() -> str:
+        """Preferenze dell'utente per le risposte: lingua, fuso orario predefinito e stile."""
+        # Se il file manca, l'eccezione diventa un errore MCP e l'host usa i valori predefiniti.
+        return file_preferenze.read_text(encoding="utf-8")
 
     # @mcp.tool registra la funzione nel catalogo MCP. La docstring diventa la «description» che il
     # modello legge per decidere se usare il tool; i tipi diventano lo «inputSchema».

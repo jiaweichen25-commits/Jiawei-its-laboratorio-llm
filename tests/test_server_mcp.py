@@ -89,3 +89,45 @@ def test_converti_unita_fuori_elenco_rifiutata_dallo_schema():
     ))
 
     assert risultato.is_error
+
+
+# ---------------------------------------------------------------- lezione 6, step 4: resource
+
+from fastmcp.exceptions import McpError  # noqa: E402
+
+from assistente.server_mcp import URI_PREFERENZE  # noqa: E402
+
+
+def esegui_con(percorso, coroutine_factory):
+    async def principale():
+        async with Client(crea_server(lambda: ISTANTE, percorso_preferenze=percorso)) as client:
+            return await coroutine_factory(client)
+    return asyncio.run(principale())
+
+
+def test_la_resource_e_nel_catalogo_delle_resource_e_non_tra_i_tool(tmp_path):
+    file = tmp_path / "preferenze.json"
+    file.write_text("{}", encoding="utf-8")
+
+    risorse = esegui_con(file, lambda c: c.list_resources())
+    strumenti = esegui_con(file, lambda c: c.list_tools())
+
+    assert [str(r.uri) for r in risorse] == [URI_PREFERENZE]
+    assert risorse[0].mime_type == "application/json"
+    assert "preferenze" not in {s.name for s in strumenti}
+
+
+def test_la_resource_restituisce_il_file_indicato(tmp_path):
+    file = tmp_path / "preferenze.json"
+    file.write_text('{"lingua": "inglese"}', encoding="utf-8")
+
+    contenuti = esegui_con(file, lambda c: c.read_resource(URI_PREFERENZE))
+
+    assert contenuti[0].text == '{"lingua": "inglese"}'
+
+
+def test_file_delle_preferenze_mancante_e_errore_mcp(tmp_path):
+    import pytest
+
+    with pytest.raises(McpError):
+        esegui_con(tmp_path / "manca.json", lambda c: c.read_resource(URI_PREFERENZE))

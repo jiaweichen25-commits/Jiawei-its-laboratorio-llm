@@ -162,3 +162,47 @@ def test_riassunto_reale_ricorda_il_nome(cfg, strumenti_mcp):
     assert not any("Jiawei" in m.content for m in stato["messages"][:-1] if isinstance(m, HumanMessage)), \
         "il primo turno è ancora in cronologia: la prova non dimostra nulla"
     assert "Jiawei" in risposta_finale(stato["messages"])
+
+
+# ---------------------------------------------------------------- lezione 6, step 4: resource
+
+def grafo_con_preferenze(cfg, tmp_path, monkeypatch, **preferenze):
+    """Server MCP vero che legge un file di preferenze temporaneo; l'host lo legge come resource."""
+    import json
+
+    from assistente.preferenze import URI_PREFERENZE, carica_preferenze
+
+    file = tmp_path / "preferenze.json"
+    file.write_text(json.dumps(preferenze), encoding="utf-8")
+    monkeypatch.setenv("PREFERENZE_FILE", str(file))
+    cliente = ClienteMCP(trasporto_stdio())
+    cliente.avvia()
+    lette = carica_preferenze(lambda: cliente.leggi_risorsa(URI_PREFERENZE), cfg.fuso_predefinito)
+    strumenti = strumenti_per_variante("mcp", crea_strumenti_mcp(cliente), cfg.orologio_api_url)
+    grafo = costruisci_grafo(crea_modello(cfg), cfg.fuso_predefinito, strumenti=strumenti, preferenze=lette)
+    return cliente, grafo
+
+
+def test_preferenze_reali_fuso_predefinito(cfg, tmp_path, monkeypatch):
+    # Slide 8: «Che ore sono?» usa il fuso delle preferenze senza chiederlo, con un fuso non ovvio.
+    cliente, grafo = grafo_con_preferenze(cfg, tmp_path, monkeypatch, fuso_predefinito="America/New_York")
+    try:
+        messaggi = chiedi(grafo, "Che ore sono?")
+    finally:
+        cliente.chiudi()
+
+    assert any(c["name"] == "orologio" and c["args"].get("fuso") == "America/New_York" for c in chiamate(messaggi)), \
+        chiamate(messaggi)
+    risposta_finale(messaggi)
+
+
+def test_preferenze_reali_lingua(cfg, tmp_path, monkeypatch):
+    # Slide 8: cambiando la lingua nel file, la sessione successiva risponde di conseguenza.
+    cliente, grafo = grafo_con_preferenze(cfg, tmp_path, monkeypatch, lingua="inglese")
+    try:
+        messaggi = chiedi(grafo, "Ciao, come stai?")
+    finally:
+        cliente.chiudi()
+
+    risposta = risposta_finale(messaggi).lower()
+    assert any(parola in risposta.split() for parola in ("i", "i'm", "you", "the", "am", "hello", "hi")), risposta

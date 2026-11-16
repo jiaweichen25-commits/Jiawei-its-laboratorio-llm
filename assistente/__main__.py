@@ -19,6 +19,7 @@ from assistente.client_mcp import ClienteMCP, ErroreCollegamentoMCP, crea_strume
 from assistente.config import ErroreConfigurazione, carica_configurazione, verifica_modello
 from assistente.grafo import OpzioniGrafo, config_sessione, costruisci_grafo
 from assistente.modello import crea_modello, descrivi_errore
+from assistente.preferenze import URI_PREFERENZE, carica_preferenze
 from assistente.terminale import conversa
 from assistente.varianti import strumenti_per_variante
 
@@ -58,6 +59,9 @@ def main() -> int:
         return 1
 
     try:
+        # Lezione 6, step 4: l'HOST legge la resource una volta, prima della prima domanda.
+        preferenze = carica_preferenze(lambda: cliente.leggi_risorsa(URI_PREFERENZE), cfg.fuso_predefinito)
+        log.info("preferenze: lingua=%s fuso=%s stile=%s", preferenze.lingua, preferenze.fuso_predefinito, preferenze.stile)
         strumenti = strumenti_per_variante(cfg.variante, crea_strumenti_mcp(cliente), cfg.orologio_api_url)
         log.info("variante orologio=%s, strumenti=%s", cfg.variante, [s.name for s in strumenti])
         grafo = costruisci_grafo(
@@ -72,6 +76,7 @@ def main() -> int:
                 soglia_riassunto=cfg.soglia_riassunto,
                 messaggi_da_conservare=cfg.messaggi_da_conservare,
             ),
+            preferenze=preferenze,
         )
         conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore)
     finally:

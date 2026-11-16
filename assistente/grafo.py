@@ -27,6 +27,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from pydantic import ValidationError
 
+from assistente.preferenze import URI_PREFERENZE, Preferenze
 from assistente.controllo import (
     DecisioneRouter,
     EsitoRevisione,
@@ -77,11 +78,28 @@ def config_sessione() -> dict:
     return {"configurable": {"thread_id": "sessione"}, "recursion_limit": LIMITE_PASSAGGI}
 
 
-def messaggio_sistema(fuso: str, riassunto: str = "") -> SystemMessage:
+FRASI_STILE = {
+    "sintetico": "dai risposte brevi, al massimo due o tre frasi",
+    "dettagliato": "dai risposte complete, con una breve spiegazione",
+}
+
+
+def messaggio_sistema(fuso: str, riassunto: str = "", preferenze: Preferenze | None = None) -> SystemMessage:
     # Lezione 6, step 3: il riassunto dei messaggi tolti dalla cronologia entra qui, IN CIMA alle
     # istruzioni, con l'indicazione esplicita di usarlo. Prova reale: messo in coda, gemma lo
     # ignorava e rispondeva «non so come ti chiami» (la slide 7 dice infatti «meglio in cima»).
-    testa = (
+    # Lezione 6, step 4: le preferenze lette dalla resource stanno ancora più in alto (slide 7:
+    # «il contenuto entra nel prompt di sistema, meglio in cima»). Lingua e fuso delle preferenze
+    # sostituiscono anche quelli scritti nelle istruzioni sugli strumenti.
+    lingua = preferenze.lingua if preferenze else "italiano"
+    if preferenze:
+        fuso = preferenze.fuso_predefinito
+    inizio = (
+        f"Preferenze dell'utente (resource {URI_PREFERENZE}): rispondi sempre in {lingua}; se "
+        f"l'utente non indica un fuso orario usa {fuso}; {FRASI_STILE[preferenze.stile]}.\n\n"
+        if preferenze else ""
+    )
+    testa = inizio + (
         f"Riassunto della conversazione finora: {riassunto}\n"
         "Usa queste informazioni per rispondere: valgono come se fossero ancora nella conversazione. "
         "Se l'utente chiede qualcosa che ha detto prima, per esempio il suo nome, rispondi da qui.\n\n"
@@ -89,7 +107,7 @@ def messaggio_sistema(fuso: str, riassunto: str = "") -> SystemMessage:
     )
     return SystemMessage(
         testa
-        + "Rispondi in italiano. Per conoscere data o ora usa sempre lo strumento `orologio`, "
+        + f"Rispondi in {lingua}. Per conoscere data o ora usa sempre lo strumento `orologio`, "
         f"senza inventarle. Se l'utente non indica un fuso orario, usa `{fuso}`. "
         # Lezione 5: i due tool MCP aggiunti (slide 25). Senza questa frase un modello piccolo
         # tende a fare i conti «a mente» invece di chiamare lo strumento.
@@ -124,6 +142,7 @@ def costruisci_grafo(
     strumenti: Sequence[BaseTool] = (),
     checkpointer=None,
     opzioni: OpzioniGrafo = OpzioniGrafo(),
+    preferenze: Preferenze | None = None,
 ):
     llm = modello.bind_tools(list(strumenti)) if strumenti else modello
     per_nome = {s.name: s for s in strumenti}
@@ -193,7 +212,7 @@ def costruisci_grafo(
         # Il messaggio di sistema si ricostruisce a ogni chiamata e non entra nello stato.
         log.info("modello: inizio chiamata")
         inizio = time.perf_counter()
-        sistema = messaggio_sistema(fuso_predefinito, state.get("riassunto", ""))
+        sistema = messaggio_sistema(fuso_predefinito, state.get("riassunto", ""), preferenze)
         risposta = llm.invoke([sistema, *state["messages"]])
         log.info(
             "modello: fine chiamata (%.1f s, tool_calls=%d)",
