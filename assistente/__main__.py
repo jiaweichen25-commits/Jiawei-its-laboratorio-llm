@@ -1,11 +1,16 @@
-"""Avvio dell'assistente: python -m assistente
+"""Avvio della CLI: python -m assistente
 
-Sequenza (lezione 5):
-  1. configurazione da .env e controllo del modello in LM Studio (come nella lezione 4);
-  2. avvio del server MCP come sottoprocesso stdio e DISCOVERY del catalogo (tools/list);
-  3. ADATTAMENTO del catalogo in tool LangChain e scelta della variante dell'orologio;
-  4. costruzione del grafo (bind_tools) e conversazione da terminale;
-  5. alla fine, chiusura della sessione MCP (il sottoprocesso termina).
+Dalla lezione 6, step 6, la CLI è un CLIENT del servizio dell'agente. Il servizio va avviato
+prima, in un altro terminale:
+
+    .\\.venv\\Scripts\\python.exe -m uvicorn assistente.servizio_agente:app --port 8001
+
+Sequenza:
+  1. configurazione della CLI dal .env (AGENTE_URL, AGENTE_TIMEOUT, LOG_LEVEL);
+  2. GET /stato: se il servizio, il server MCP o il modello non sono disponibili, messaggio ed uscita con codice 1;
+  3. conversazione da terminale, una richiesta POST /conversazione per ogni domanda.
+
+Avvio del server MCP, preferenze e grafo ora stanno nel servizio (assistente/agente.py).
 """
 
 import logging
@@ -13,17 +18,10 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from langgraph.checkpoint.memory import InMemorySaver
 
-from assistente.client_mcp import ClienteMCP, ErroreCollegamentoMCP, crea_strumenti_mcp, trasporto_stdio
-from assistente.config import ErroreConfigurazione, carica_configurazione, verifica_modello
-from assistente.grafo import OpzioniGrafo, config_sessione, costruisci_grafo
-from assistente.modello import crea_modello, descrivi_errore
-from assistente.preferenze import URI_PREFERENZE, carica_preferenze
+from assistente.cliente_agente import ClienteAgente, ErroreServizio
+from assistente.config import ErroreConfigurazione, carica_configurazione_cli
 from assistente.terminale import conversa
-from assistente.varianti import strumenti_per_variante
-
-log = logging.getLogger("assistente.avvio")
 
 
 def configura_output() -> None:
@@ -36,52 +34,27 @@ def main() -> int:
     configura_output()
     load_dotenv(override=False)
     try:
-        cfg = carica_configurazione(os.environ)
-        # Le librerie restano su WARNING; LOG_LEVEL vale solo per i log dell'applicazione.
-        logging.basicConfig(
-            level=logging.WARNING,
-            stream=sys.stderr,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-        logging.getLogger("assistente").setLevel(cfg.log_level)
-        verifica_modello(cfg)
+        cfg = carica_configurazione_cli(os.environ)
     except ErroreConfigurazione as exc:
         print(exc, file=sys.stderr)
         return 1
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("assistente").setLevel(cfg.log_level)
 
-    # Il client MCP resta aperto per tutta la sessione: un solo sottoprocesso server.
-    cliente = ClienteMCP(trasporto_stdio())
+    servizio = ClienteAgente(cfg.agente_url, timeout=cfg.agente_timeout)
     try:
-        cliente.avvia()
-    except ErroreCollegamentoMCP as exc:
-        # Slide 24, «processo non avviato»: si segnala subito, prima di parlare col modello.
-        print(f"Errore di collegamento al server MCP: {exc}", file=sys.stderr)
+        stato = servizio.stato()
+    except ErroreServizio as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    problemi = {k: v for k, v in stato.items() if v != "ok"}
+    if problemi:
+        # Come nella lezione 4: se il modello non c'è, lo si dice subito invece che alla prima domanda.
+        print("Il servizio agente non è pronto: " + "; ".join(f"{k}: {v}" for k, v in problemi.items()), file=sys.stderr)
         return 1
 
-    try:
-        # Lezione 6, step 4: l'HOST legge la resource una volta, prima della prima domanda.
-        preferenze = carica_preferenze(lambda: cliente.leggi_risorsa(URI_PREFERENZE), cfg.fuso_predefinito)
-        log.info("preferenze: lingua=%s fuso=%s stile=%s", preferenze.lingua, preferenze.fuso_predefinito, preferenze.stile)
-        strumenti = strumenti_per_variante(cfg.variante, crea_strumenti_mcp(cliente), cfg.orologio_api_url)
-        log.info("variante orologio=%s, strumenti=%s", cfg.variante, [s.name for s in strumenti])
-        grafo = costruisci_grafo(
-            crea_modello(cfg),
-            cfg.fuso_predefinito,
-            strumenti=strumenti,
-            checkpointer=InMemorySaver(),
-            # Lezione 6: router, revisore e riassunto si accendono con i valori del file .env.
-            opzioni=OpzioniGrafo(
-                ambito=cfg.ambito,
-                limite_revisioni=cfg.limite_revisioni,
-                soglia_riassunto=cfg.soglia_riassunto,
-                messaggi_da_conservare=cfg.messaggi_da_conservare,
-            ),
-            preferenze=preferenze,
-        )
-        # Lezione 6, step 5: il client MCP fornisce anche i prompt per /prompts e /prompt.
-        conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore, prompt_mcp=cliente)
-    finally:
-        cliente.chiudi()  # anche in caso di errore o Ctrl+C: il server MCP non resta acceso
+    conversa(servizio)
     return 0
 
 

@@ -181,6 +181,10 @@ class ClienteMCP:
         log.info("mcp: resources/read %s → %s", uri, testo)
         return testo
 
+    def attivo(self) -> bool:
+        """Lezione 6, step 6 (GET /stato): la sessione con il server è aperta?"""
+        return self._client is not None and self._loop is not None
+
     def catalogo(self) -> list:
         """Le voci ottenute con tools/list: ognuna ha name, description e input_schema."""
         return list(self._catalogo)

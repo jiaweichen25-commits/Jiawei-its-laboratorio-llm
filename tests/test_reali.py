@@ -212,38 +212,19 @@ def test_preferenze_reali_lingua(cfg, tmp_path, monkeypatch):
 
 def test_prompt_reale_spiega_passa_da_router_e_revisore(cfg):
     # Slide 10: il prompt richiamato dall'utente passa dal grafo come qualsiasi altra domanda.
-    # Si usa il terminale vero, con lo streaming: con invoke la spiegazione intera supera il
-    # timeout di 120 s del modello, mentre in streaming il limite vale tra un frammento e l'altro.
-    import io
+    # Agente vero (crea_agente): esegue il grafo in streaming, quindi la spiegazione lunga non
+    # supera il timeout di 120 s del modello.
+    from assistente.agente import crea_agente
 
-    from langgraph.checkpoint.memory import InMemorySaver
+    agente, cliente = crea_agente(cfg)
+    try:
+        esito = agente.rispondi([], prompt=("spiega", {"argomento": "Model Context Protocol", "livello": "base"}))
+    finally:
+        cliente.chiudi()
 
-    from assistente.grafo import config_sessione
-    from assistente.terminale import conversa
-
-    righe = iter(['/prompt spiega argomento="Model Context Protocol" livello=base'])
-
-    def leggi(_=""):
-        try:
-            return next(righe)
-        except StopIteration:
-            raise EOFError
-
-    with ClienteMCP(trasporto_stdio()) as cliente:
-        strumenti = strumenti_per_variante("mcp", crea_strumenti_mcp(cliente), cfg.orologio_api_url)
-        grafo = costruisci_grafo(
-            crea_modello(cfg), cfg.fuso_predefinito, strumenti=strumenti, checkpointer=InMemorySaver(),
-            opzioni=OpzioniGrafo(ambito=cfg.ambito, limite_revisioni=1),
-        )
-        config = config_sessione()
-        out = io.StringIO()
-        conversa(grafo, config, leggi, out, prompt_mcp=cliente)
-        stato = grafo.get_state(config).values
-
-    assert stato["categoria"] == "conversazione", out.getvalue()  # il router non l'ha rifiutato
-    assert stato["messages"][0].content.startswith("Spiegami «Model Context Protocol» a livello base")
-    risposta = risposta_finale(stato["messages"])
-    assert "protocol" in risposta.lower() or "MCP" in risposta, risposta
+    assert not esito.rifiutata  # il router non l'ha rifiutato
+    assert esito.cronologia[0]["testo"].startswith("Spiegami «Model Context Protocol» a livello base")
+    assert "protocol" in esito.risposta.lower() or "MCP" in esito.risposta, esito.risposta
 
 
 def test_prompt_reale_riassumi_conversazione(cfg):
@@ -259,3 +240,62 @@ def test_prompt_reale_riassumi_conversazione(cfg):
 
     risposta = risposta_finale(stato["messages"]).lower()
     assert "tokyo" in risposta and ("miglia" in risposta or "km" in risposta), risposta
+
+
+# ---------------------------------------------------------------- lezione 6, step 6: servizio HTTP
+
+@pytest.fixture(scope="module")
+def servizio_vero(cfg):
+    """Servizio dell'agente avviato con uvicorn come sottoprocesso, su una porta di prova."""
+    import subprocess
+    import sys
+    import time
+
+    import httpx
+
+    porta = 8011
+    processo = subprocess.Popen(
+        [sys.executable, "-m", "uvicorn", "assistente.servizio_agente:app", "--port", str(porta)],
+        cwd=Path(__file__).resolve().parent.parent, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    url = f"http://127.0.0.1:{porta}"
+    try:
+        for _ in range(120):
+            try:
+                if httpx.get(f"{url}/stato", timeout=30).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.5)
+        else:
+            pytest.fail("il servizio dell'agente non è diventato pronto")
+        yield url
+    finally:
+        processo.terminate()
+        processo.wait(30)
+
+
+def test_servizio_reale_stessa_risposta_da_cli_e_da_api(servizio_vero):
+    # Evidenza minima dello step 6 (slide 19): stessa risposta dalla CLI e dall'API.
+    import io
+
+    import httpx
+
+    from assistente.cliente_agente import ClienteAgente
+    from assistente.terminale import conversa
+
+    righe = iter(["Che ore sono a Tokyo?"])
+
+    def leggi(_=""):
+        try:
+            return next(righe)
+        except StopIteration:
+            raise EOFError
+
+    out = io.StringIO()
+    conversa(ClienteAgente(servizio_vero), leggi, out)
+    diretta = httpx.post(f"{servizio_vero}/conversazione", json={"domanda": "Che ore sono a Tokyo?"}, timeout=600)
+
+    assert '[strumento] orologio(fuso="Asia/Tokyo")' in out.getvalue(), out.getvalue()
+    assert diretta.status_code == 200, diretta.text
+    assert [(s["nome"], s["argomenti"]) for s in diretta.json()["strumenti_usati"]] == [("orologio", {"fuso": "Asia/Tokyo"})]

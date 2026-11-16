@@ -1,10 +1,13 @@
+# Lezione 6, step 6: il container esegue il SERVIZIO dell'agente (non più la CLI).
+# La CLI gira sul computer host e lo raggiunge su http://localhost:8001.
+# Lo step 9 aggiungerà front-end, back-end e PostgreSQL e smetterà di pubblicare questa porta.
 services:
-  assistente:
+  agente:
     build: .
     env_file: .env
     environment:
       LM_BASE_URL: http://host.docker.internal:1234/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    stdin_open: true
-    tty: true
+    ports:
+      - "8001:8001"

@@ -2,14 +2,15 @@
 
 Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `its-laboratorio-llm/`.
 
-Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio, opzioni dei nodi della lezione 6), `grafo.py` (stato, nodi, instradamento: riassunto → router → modello ⇄ strumenti → revisore, più rifiuto; i nodi della lezione 6 si accendono con `OpzioniGrafo`), `controllo.py` (prompt e output strutturato di router, revisore e riassunto), `preferenze.py` (validazione della resource `utente://preferenze`, letta dall'host all'avvio da `preferenze.json`), `comandi.py` (comandi `/prompts` e `/prompt` del terminale e controllo degli argomenti dei prompt MCP), `modello.py` (collegamento a LM Studio), `terminale.py` (interfaccia), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
+Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio, opzioni dei nodi della lezione 6), `grafo.py` (stato, nodi, instradamento: riassunto → router → modello ⇄ strumenti → revisore, più rifiuto; i nodi della lezione 6 si accendono con `OpzioniGrafo`), `controllo.py` (prompt e output strutturato di router, revisore e riassunto), `preferenze.py` (validazione della resource `utente://preferenze`, letta dall'host all'avvio da `preferenze.json`), `comandi.py` (comandi `/prompts` e `/prompt` del terminale e controllo degli argomenti dei prompt MCP), `agente.py` (un turno senza stato: cronologia e riassunto dal chiamante, `EsitoTurno` in uscita; costruzione dell'agente), `servizio_agente.py` (servizio FastAPI dell'agente: `/conversazione`, `/prompts`, `/stato`), `cliente_agente.py` (client HTTP usato dalla CLI), `modello.py` (collegamento a LM Studio), `terminale.py` (CLI, client del servizio), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `tests/`; `Dockerfile` e `compose.yaml`; dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
 
 Comandi (PowerShell, dalla cartella del progetto):
 
 - test automatici: `.\.venv\Scripts\python.exe -m pytest`
 - prove reali, solo su richiesta: `.\.venv\Scripts\python.exe -m pytest -m lmstudio -v` (LM Studio attivo) e `.\.venv\Scripts\python.exe -m pytest -m docker -v` (Docker e LM Studio attivi)
 - servizio della variante fastapi: `.\.venv\Scripts\python.exe -m uvicorn assistente.servizio_api:app --port 8000`
-- avvio: `.\.venv\Scripts\python.exe -m assistente` oppure `docker compose build`, poi `docker compose run --rm --name assistente-demo assistente`
+- servizio dell'agente (lezione 6, step 6): `.\.venv\Scripts\python.exe -m uvicorn assistente.servizio_agente:app --port 8001` oppure `docker compose up -d --build`
+- CLI, client del servizio: `.\.venv\Scripts\python.exe -m assistente`
 
 ## Obiettivo
 

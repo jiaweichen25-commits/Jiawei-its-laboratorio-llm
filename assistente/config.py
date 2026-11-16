@@ -150,3 +150,32 @@ def verifica_modello(
             f"Il modello «{cfg.modello}» non è tra quelli esposti da LM Studio. "
             f"Disponibili: {', '.join(disponibili) or 'nessuno'}."
         )
+
+
+# ---------------------------------------------------------------------- lezione 6, step 6: la CLI
+
+@dataclass(frozen=True)
+class ConfigurazioneCli:
+    """La CLI parla solo con il servizio dell'agente: non le servono LM Studio né il modello."""
+
+    agente_url: str = "http://localhost:8001"   # AGENTE_URL
+    agente_timeout: float = 600.0               # AGENTE_TIMEOUT, secondi: le risposte lunghe durano minuti
+    log_level: str = "INFO"                     # LOG_LEVEL
+
+
+def carica_configurazione_cli(env: Mapping[str, str]) -> ConfigurazioneCli:
+    livello = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
+    if livello not in LIVELLI_LOG:
+        raise ErroreConfigurazione(f"LOG_LEVEL non valido: «{livello}». Valori ammessi: {', '.join(LIVELLI_LOG)}.")
+    testo = env.get("AGENTE_TIMEOUT", "").strip()
+    try:
+        timeout = float(testo) if testo else 600.0
+    except ValueError:
+        timeout = -1.0
+    if timeout <= 0:
+        raise ErroreConfigurazione(f"AGENTE_TIMEOUT deve essere un numero di secondi maggiore di 0: «{testo}».")
+    return ConfigurazioneCli(
+        agente_url=(env.get("AGENTE_URL", "").strip() or "http://localhost:8001").rstrip("/"),
+        agente_timeout=timeout,
+        log_level=livello,
+    )

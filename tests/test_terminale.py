@@ -1,22 +1,20 @@
+"""Terminale: dallo step 6 della lezione 6 è un CLIENT del servizio dell'agente.
+
+Il servizio qui è finto: un oggetto con le stesse operazioni di ClienteAgente. Le prove sul
+grafo (rifiuto, revisore, riassunto, strumenti) sono in test_agente.py e test_servizio_agente.py.
+"""
+
 import io
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
-import httpx
 import pytest
-import openai
-from langchain_core.messages import AIMessage, HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.errors import GraphRecursionError
+from mcp.types import Prompt, PromptArgument
 
-from assistente.grafo import OpzioniGrafo, config_sessione, costruisci_grafo, risposta_rifiuto
-from assistente.modello import descrivi_errore
-from assistente.strumenti import crea_orologio
+from assistente.cliente_agente import ErroreServizio
 from assistente.terminale import conversa, formatta_traccia
-from tests.modello_finto import ModelloFinto
 
 
 def lettore(*righe):
@@ -31,278 +29,175 @@ def lettore(*righe):
     return leggi
 
 
-def grafo_con(*risposte):
-    modello = ModelloFinto(risposte=list(risposte))
-    return modello, costruisci_grafo(modello, "Europe/Rome", checkpointer=InMemorySaver())
+def esito(risposta, cronologia, **altro):
+    return {"risposta": risposta, "strumenti_usati": [], "cronologia": cronologia, "riassunto": "",
+            "rifiutata": False, "revisioni": [], "messaggi_riassunti": 0, **altro}
+
+
+class ServizioFinto:
+    """Risponde con gli esiti prestabiliti e registra le richieste ricevute."""
+
+    def __init__(self, *esiti):
+        self.esiti = list(esiti)
+        self.richieste = []
+
+    def conversazione(self, cronologia, riassunto="", domanda=None, prompt=None):
+        self.richieste.append({"cronologia": list(cronologia), "riassunto": riassunto, "domanda": domanda, "prompt": prompt})
+        prossimo = self.esiti.pop(0)
+        if isinstance(prossimo, BaseException):
+            raise prossimo
+        return prossimo
+
+    def prompts(self):
+        return [Prompt(name="spiega", description="Spiega un argomento.", arguments=[
+            PromptArgument(name="argomento", description="concetto", required=True),
+        ])]
+
+
+def u(testo):
+    return {"ruolo": "utente", "testo": testo}
+
+
+def a(testo):
+    return {"ruolo": "assistente", "testo": testo}
 
 
 def test_risposta_ed_esci():
-    _, grafo = grafo_con(AIMessage("Ciao!"))
+    servizio = ServizioFinto(esito("Ciao!", [u("ciao"), a("Ciao!")]))
     out = io.StringIO()
 
-    conversa(grafo, config_sessione(), lettore("ciao", "esci"), out)
+    conversa(servizio, lettore("ciao", "esci", "non letto"), out)
 
     assert "Ciao!" in out.getvalue()
+    assert servizio.richieste == [{"cronologia": [], "riassunto": "", "domanda": "ciao", "prompt": None}]
 
 
-class OutRegistrato(io.StringIO):
-    """Registra ogni scrittura separatamente, per vedere i frammenti dello streaming."""
+def test_la_cronologia_restituita_dal_servizio_viene_rimandata():
+    servizio = ServizioFinto(
+        esito("Piacere.", [u("Mi chiamo Jiawei"), a("Piacere.")], riassunto="r1"),
+        esito("Jiawei.", [u("Mi chiamo Jiawei"), a("Piacere."), u("Come mi chiamo?"), a("Jiawei.")]),
+    )
 
-    def __init__(self):
-        super().__init__()
-        self.scritture = []
+    conversa(servizio, lettore("Mi chiamo Jiawei", "Come mi chiamo?"), io.StringIO())
 
-    def write(self, testo):
-        self.scritture.append(testo)
-        return super().write(testo)
-
-
-def test_streaming_in_ordine():
-    modello, grafo = grafo_con(AIMessage("Sono le dieci"))
-    out = OutRegistrato()
-
-    conversa(grafo, config_sessione(), lettore("che ore sono?"), out)
-
-    assert [s for s in out.scritture if s in ("Sono ", "le ", "dieci")] == ["Sono ", "le ", "dieci"]
-    assert out.getvalue().count("Sono") == 1
-    assert len(modello.ricevuti) == 1
+    seconda = servizio.richieste[1]
+    assert seconda["cronologia"] == [u("Mi chiamo Jiawei"), a("Piacere.")]
+    assert seconda["riassunto"] == "r1"
 
 
-def test_uscite():
-    modello, grafo = grafo_con()
+def test_uscite_senza_chiamate():
+    servizio = ServizioFinto()
 
-    conversa(grafo, config_sessione(), lettore("   ", "  ESCI ", "non letto"), io.StringIO())
-    conversa(grafo, config_sessione(), lettore(), io.StringIO())
+    conversa(servizio, lettore("   ", "  ESCI ", "non letto"), io.StringIO())
+    conversa(servizio, lettore(), io.StringIO())
 
-    assert modello.ricevuti == []
+    assert servizio.richieste == []
 
 
-def test_errore_connessione_e_ripresa():
-    richiesta = httpx.Request("POST", "http://localhost:1234/v1/chat/completions")
-    modello, grafo = grafo_con(openai.APIConnectionError(request=richiesta), AIMessage("ok"))
-    config = config_sessione()
+def test_tracce_di_strumenti_revisore_e_riassunto():
+    servizio = ServizioFinto(esito(
+        "Sono le 00:42.", [u("Che ore sono a Tokyo?"), a("Sono le 00:42.")],
+        strumenti_usati=[{"nome": "orologio", "argomenti": {"fuso": "Asia/Tokyo"}, "risultato": "00:42"}],
+        revisioni=["manca il giorno"], messaggi_riassunti=4,
+    ))
     out = io.StringIO()
 
-    conversa(grafo, config, lettore("a", "b", "esci"), out, descrivi_errore=descrivi_errore)
+    conversa(servizio, lettore("Che ore sono a Tokyo?"), out)
+
+    righe = out.getvalue().splitlines()
+    assert "[riassunto] cronologia compressa: 4 messaggi sostituiti" in righe
+    assert '[strumento] orologio(fuso="Asia/Tokyo") → 00:42' in righe
+    assert "[revisore] non coerente: manca il giorno" in righe
+    assert righe.index('[strumento] orologio(fuso="Asia/Tokyo") → 00:42') < righe.index("Sono le 00:42.")
+
+
+def test_errore_del_servizio_e_ripresa_con_la_cronologia_di_prima():
+    servizio = ServizioFinto(
+        ErroreServizio("Errore 503 dal servizio agente: Connessione a LM Studio fallita"),
+        esito("ok", [u("b"), a("ok")]),
+    )
+    out = io.StringIO()
+
+    conversa(servizio, lettore("a", "b"), out)
 
     testo = out.getvalue()
-    assert "Connessione a LM Studio fallita" in testo
     assert testo.index("Connessione a LM Studio fallita") < testo.index("ok")
-    messaggi = grafo.get_state(config).values["messages"]
-    assert [(type(m), m.content) for m in messaggi] == [(HumanMessage, "b"), (AIMessage, "ok")]
-    assert "a" not in [m.content for m in modello.ricevuti[1]]
+    assert servizio.richieste[1]["cronologia"] == []  # il turno fallito non ha lasciato tracce
 
 
-def test_limite_passaggi_e_ripresa():
-    _, grafo = grafo_con(GraphRecursionError("troppi"), AIMessage("ok"))
+def test_ctrl_c_durante_la_risposta():
+    servizio = ServizioFinto(KeyboardInterrupt())
+
+    conversa(servizio, lettore("a", "b"), io.StringIO())
+
+    assert len(servizio.richieste) == 1
+
+
+# ---------------------------------------------------------------- comandi (step 5, ora via servizio)
+
+def test_comando_prompts():
+    servizio = ServizioFinto()
     out = io.StringIO()
 
-    conversa(grafo, config_sessione(), lettore("a", "b"), out)
+    conversa(servizio, lettore("  /PROMPTS  "), out)
 
-    assert "Troppi passaggi" in out.getvalue()
-    assert "ok" in out.getvalue()
+    assert "argomento (obbligatorio)" in out.getvalue() and servizio.richieste == []
 
 
-def test_ctrl_c_durante_risposta():
-    _, grafo = grafo_con(KeyboardInterrupt())
+def test_comando_prompt_valido():
+    servizio = ServizioFinto(esito("Spiegazione.", [u("Spiegami «MCP»."), a("Spiegazione.")]))
+    out = io.StringIO()
 
-    conversa(grafo, config_sessione(), lettore("a", "b"), io.StringIO())
+    conversa(servizio, lettore('/prompt spiega argomento="Model Context Protocol"'), out)
+
+    assert servizio.richieste[0]["prompt"] == {"nome": "spiega", "argomenti": {"argomento": "Model Context Protocol"}}
+    assert servizio.richieste[0]["domanda"] is None
+    assert "Spiegazione." in out.getvalue()
+
+
+@pytest.mark.parametrize("riga", [
+    "/prompt spiega",                            # obbligatorio mancante
+    "/prompt spiega argomento=MCP colore=blu",   # argomento sconosciuto
+    "/prompt inventato",                         # prompt sconosciuto
+    '/prompt spiega argomento="MCP',             # virgolette non chiuse
+    "/boh",                                      # comando sconosciuto
+])
+def test_comando_non_valido_non_chiama_il_servizio(riga):
+    servizio = ServizioFinto()
+    out = io.StringIO()
+
+    conversa(servizio, lettore(riga), out)
+
+    assert out.getvalue().strip() and servizio.richieste == []
+
+
+def test_servizio_spento_durante_prompts():
+    class Spento(ServizioFinto):
+        def prompts(self):
+            raise ErroreServizio("Servizio agente non raggiungibile")
+
+    out = io.StringIO()
+
+    conversa(Spento(), lettore("/prompts"), out)
+
+    assert "non raggiungibile" in out.getvalue()
+
+
+# ---------------------------------------------------------------- formattazione e codifica
+
+def test_formatta_traccia():
+    assert formatta_traccia("orologio", {"fuso": "Asia/Tokyo"}, "X") == '[strumento] orologio(fuso="Asia/Tokyo") → X'
 
 
 def test_output_cp1252():
     radice = Path(__file__).resolve().parent.parent
     comando = "from assistente.__main__ import configura_output; configura_output(); print('→ «x»')"
 
-    esito = subprocess.run(
+    esito_processo = subprocess.run(
         [sys.executable, "-c", comando],
         env={**os.environ, "PYTHONIOENCODING": "cp1252"},
         cwd=radice,
         capture_output=True,
     )
 
-    assert esito.returncode == 0, esito.stderr
-
-
-def test_formatta_traccia():
-    assert formatta_traccia("orologio", {"fuso": "Asia/Tokyo"}, "X") == '[strumento] orologio(fuso="Asia/Tokyo") → X'
-
-
-def test_testo_poi_traccia():
-    chiamata = AIMessage("Controllo l'ora.", tool_calls=[
-        {"name": "orologio", "args": {"fuso": "Asia/Tokyo"}, "id": "c1"},
-    ])
-    modello = ModelloFinto(risposte=[chiamata, AIMessage("Sono le 00:42.")])
-    orologio = crea_orologio(lambda: datetime(2026, 10, 26, 15, 42, 10, tzinfo=timezone.utc))
-    grafo = costruisci_grafo(modello, "Europe/Rome", strumenti=[orologio], checkpointer=InMemorySaver())
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("Che ore sono a Tokyo?"), out)
-
-    traccia = '[strumento] orologio(fuso="Asia/Tokyo") → 2026-10-27T00:42:10+09:00 (Asia/Tokyo), martedì'
-    assert f"Controllo l'ora.\n{traccia}\nSono le 00:42." in out.getvalue()
-
-
-def test_due_chiamate_due_tracce_in_ordine():
-    chiamate = AIMessage("", tool_calls=[
-        {"name": "orologio", "args": {"fuso": "Europe/Rome"}, "id": "c1"},
-        {"name": "orologio", "args": {"fuso": "Asia/Tokyo"}, "id": "c2"},
-    ])
-    modello = ModelloFinto(risposte=[chiamate, AIMessage("Fatto.")])
-    orologio = crea_orologio(lambda: datetime(2026, 10, 26, 15, 42, 10, tzinfo=timezone.utc))
-    grafo = costruisci_grafo(modello, "Europe/Rome", strumenti=[orologio], checkpointer=InMemorySaver())
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("Ora a Roma e a Tokyo?"), out)
-
-    tracce = [r for r in out.getvalue().splitlines() if r.startswith("[strumento]")]
-    assert len(tracce) == 2
-    assert 'orologio(fuso="Europe/Rome")' in tracce[0]
-    assert 'orologio(fuso="Asia/Tokyo")' in tracce[1]
-
-
-# ---------------------------------------------------------------- lezione 6
-
-def grafo_lezione6(opzioni, *risposte):
-    modello = ModelloFinto(risposte=list(risposte))
-    return modello, costruisci_grafo(modello, "Europe/Rome", checkpointer=InMemorySaver(), opzioni=opzioni)
-
-
-def test_rifiuto_mostrato_all_utente():
-    _, grafo = grafo_lezione6(
-        OpzioniGrafo(ambito="data e ora"), AIMessage('{"categoria": "fuori_ambito", "motivo": "ricetta"}')
-    )
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("Dammi una ricetta"), out)
-
-    assert risposta_rifiuto("data e ora") in out.getvalue()
-    assert "categoria" not in out.getvalue()  # il JSON del router non va mostrato
-
-
-def test_revisione_mostrata_e_contatore_azzerato_al_turno_successivo():
-    no = AIMessage('{"coerente": false, "motivo": "manca il calcolo"}')
-    si = AIMessage('{"coerente": true, "motivo": "ok"}')
-    _, grafo = grafo_lezione6(
-        OpzioniGrafo(limite_revisioni=1),
-        AIMessage("Sono le 10."), no, AIMessage("Sono le 10 e fa 96."), no,   # primo turno: limite 1 raggiunto
-        AIMessage("Ciao."), no, AIMessage("Ciao di nuovo."), si,              # secondo turno: si può rivedere ancora
-    )
-    config = config_sessione()
-    out = io.StringIO()
-
-    conversa(grafo, config, lettore("Che ore sono e quanto fa 12 * 8?", "ciao"), out)
-
-    righe = out.getvalue().splitlines()
-    assert "[revisore] non coerente: manca il calcolo" in righe
-    assert righe.index("Sono le 10.") < righe.index("[revisore] non coerente: manca il calcolo") < righe.index("Sono le 10 e fa 96.")
-    assert "Ciao di nuovo." in righe  # al secondo turno il contatore è ripartito da zero
-    assert "coerente\"" not in out.getvalue()  # il JSON del revisore non va mostrato
-
-
-def test_riassunto_mostrato_e_cronologia_coerente_dopo_un_turno_fallito():
-    richiesta = httpx.Request("POST", "http://localhost:1234/v1/chat/completions")
-    _, grafo = grafo_lezione6(
-        OpzioniGrafo(soglia_riassunto=4, messaggi_da_conservare=2),
-        AIMessage("r1"), AIMessage("r2"),
-        AIMessage("riassunto"), openai.APIConnectionError(request=richiesta),  # terzo turno: comprime, poi l'agente cade
-        AIMessage("r4"),
-    )
-    config = config_sessione()
-    out = io.StringIO()
-
-    conversa(grafo, config, lettore("d1", "d2", "d3", "d4"), out, descrivi_errore=descrivi_errore)
-
-    assert "[riassunto] cronologia compressa: 2 messaggi sostituiti" in out.getvalue().splitlines()
-    stato = grafo.get_state(config).values
-    assert [m.content for m in stato["messages"]] == ["d2", "r2", "d4", "r4"]  # del turno fallito non resta d3
-    assert stato["riassunto"] == "riassunto"
-
-
-# ---------------------------------------------------------------- lezione 6, step 5: /prompts e /prompt
-
-from mcp.types import Prompt, PromptArgument  # noqa: E402
-
-from assistente.client_mcp import ErroreCollegamentoMCP  # noqa: E402
-
-
-class PromptFinti:
-    """Fa le veci del ClienteMCP: catalogo fisso e messaggi prestabiliti."""
-
-    def __init__(self, guasto=False):
-        self.richieste = []
-        self.guasto = guasto
-
-    def elenco_prompt(self):
-        return [Prompt(name="spiega", description="Spiega un argomento.", arguments=[
-            PromptArgument(name="argomento", description="concetto", required=True),
-            PromptArgument(name="livello", description="base, intermedio o avanzato", required=False),
-        ])]
-
-    def ottieni_prompt(self, nome, argomenti):
-        self.richieste.append((nome, argomenti))
-        if self.guasto:
-            raise ErroreCollegamentoMCP("la sessione con il server non è attiva")
-        return [HumanMessage(f"Spiegami «{argomenti['argomento']}» a livello {argomenti.get('livello', 'base')}.")]
-
-
-def test_comando_prompts_elenca_senza_chiamare_il_modello():
-    modello, grafo = grafo_con()
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("  /PROMPTS  "), out, prompt_mcp=PromptFinti())
-
-    assert "spiega" in out.getvalue() and "argomento (obbligatorio)" in out.getvalue()
-    assert modello.ricevuti == []
-
-
-def test_comando_prompt_valido_va_al_grafo():
-    modello, grafo = grafo_con(AIMessage("MCP è un protocollo."))
-    finti = PromptFinti()
-    config = config_sessione()
-    out = io.StringIO()
-
-    conversa(grafo, config, lettore('/prompt spiega argomento="Model Context Protocol" livello=base'), out,
-             prompt_mcp=finti)
-
-    assert finti.richieste == [("spiega", {"argomento": "Model Context Protocol", "livello": "base"})]
-    assert "MCP è un protocollo." in out.getvalue()
-    messaggi = grafo.get_state(config).values["messages"]
-    assert messaggi[0].content == "Spiegami «Model Context Protocol» a livello base."
-
-
-@pytest.mark.parametrize("riga", [
-    "/prompt spiega livello=base",                 # obbligatorio mancante
-    "/prompt spiega argomento=MCP colore=blu",     # argomento sconosciuto
-    "/prompt inventato",                           # prompt sconosciuto
-    '/prompt spiega argomento="MCP',               # virgolette non chiuse
-    "/boh",                                        # comando sconosciuto
-])
-def test_comando_non_valido_non_chiama_ne_server_ne_modello(riga):
-    modello, grafo = grafo_con()
-    finti = PromptFinti()
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore(riga), out, prompt_mcp=finti)
-
-    assert out.getvalue().strip()  # un messaggio per l'utente c'è sempre
-    assert finti.richieste == [] and modello.ricevuti == []
-
-
-def test_server_caduto_durante_prompt():
-    modello, grafo = grafo_con()
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("/prompt spiega argomento=MCP"), out, prompt_mcp=PromptFinti(guasto=True))
-
-    assert "Errore di collegamento MCP" in out.getvalue()
-    assert modello.ricevuti == []
-
-
-def test_senza_prompt_mcp_i_comandi_lo_dicono():
-    modello, grafo = grafo_con()
-    out = io.StringIO()
-
-    conversa(grafo, config_sessione(), lettore("/prompts"), out)
-
-    assert "non disponibili" in out.getvalue()
-    assert modello.ricevuti == []
+    assert esito_processo.returncode == 0, esito_processo.stderr

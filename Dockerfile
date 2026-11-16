@@ -9,4 +9,5 @@ COPY assistente/ ./assistente/
 # Lezione 6, step 4: il file letto dalla resource utente://preferenze.
 COPY preferenze.json .
 
-CMD ["python", "-m", "assistente"]
+# Lezione 6, step 6: il container serve l'API dell'agente; 0.0.0.0 la rende raggiungibile da fuori.
+CMD ["python", "-m", "uvicorn", "assistente.servizio_agente:app", "--host", "0.0.0.0", "--port", "8001"]

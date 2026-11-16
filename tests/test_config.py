@@ -185,3 +185,29 @@ def test_soglia_zero_spegne_il_riassunto():
     c = carica_configurazione({**ENV, "SOGLIA_RIASSUNTO": "0", "LIMITE_REVISIONI": "0"})
 
     assert (c.soglia_riassunto, c.limite_revisioni) == (0, 0)
+
+
+# ---------------------------------------------------------------- lezione 6, step 6: configurazione della CLI
+
+def test_configurazione_cli_predefinita_senza_variabili_di_lm_studio():
+    from assistente.config import carica_configurazione_cli
+
+    c = carica_configurazione_cli({})
+
+    assert (c.agente_url, c.agente_timeout, c.log_level) == ("http://localhost:8001", 600.0, "INFO")
+
+
+def test_configurazione_cli_personalizzata():
+    from assistente.config import carica_configurazione_cli
+
+    c = carica_configurazione_cli({"AGENTE_URL": "http://127.0.0.1:9000/", "AGENTE_TIMEOUT": "30", "LOG_LEVEL": "warning"})
+
+    assert (c.agente_url, c.agente_timeout, c.log_level) == ("http://127.0.0.1:9000", 30.0, "WARNING")
+
+
+@pytest.mark.parametrize("valore", ["zero", "0", "-5"])
+def test_timeout_cli_non_valido(valore):
+    from assistente.config import carica_configurazione_cli
+
+    with pytest.raises(ErroreConfigurazione, match="AGENTE_TIMEOUT"):
+        carica_configurazione_cli({"AGENTE_TIMEOUT": valore})

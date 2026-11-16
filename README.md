@@ -22,7 +22,7 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
 `strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
-`preferenze.py`, `comandi.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -185,51 +185,96 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
 
 ## Avvio locale
 
-```powershell
-.\.venv\Scripts\python.exe -m assistente
+Dalla lezione 6 (step 6) l'agente è un **servizio HTTP** e la CLI è un suo client. Servono due terminali.
+
+1. Primo terminale, il servizio dell'agente (avvia anche il server MCP come sottoprocesso e legge le preferenze):
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m uvicorn assistente.servizio_agente:app --port 8001
+   ```
+
+   Documentazione OpenAPI interattiva su `http://localhost:8001/docs`.
+
+2. Secondo terminale, la CLI:
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m assistente
+   ```
+
+   All'avvio la CLI chiama `GET /stato`; se il servizio non risponde, o se il server MCP o il modello non sono
+   disponibili, lo dice ed esce con codice 1. Scrivi le domande (es. «Che ore sono a Tokyo?», «Quanto fa (17+25)*3?»,
+   «Converti 10 km in miglia»), `/prompts` e `/prompt`; `esci` chiude la sessione. La risposta compare quando è
+   completa, dopo la riga `[agente] in attesa della risposta...`, preceduta dalle tracce `[strumento]`, `[revisore]` e
+   `[riassunto]`. I log del grafo (`LOG_LEVEL=INFO`) compaiono nel terminale del servizio.
+
+### Step 6 · L'agente come servizio HTTP
+
+```
+CLI (python -m assistente) ──HTTP──▶ servizio agente (porta 8001) ──▶ grafo ──▶ LM Studio / server MCP
 ```
 
-All'avvio il programma lancia il server MCP come sottoprocesso (`python -m assistente.server_mcp`), ne legge il
-catalogo e chiude il server all'uscita. Scrivi le domande (es. «Che ore sono a Tokyo?», «Quanto fa (17+25)*3?»,
-«Converti 10 km in miglia»); `esci` chiude la sessione. Quando il modello usa uno strumento, il programma lo esegue e
-stampa una riga `[strumento] nome(argomenti) → risultato`. Con `LOG_LEVEL=INFO` i log su stderr mostrano anche la
-traccia della slide 23: `variante=... call_id=... esito=ok|errore`.
+| Endpoint | Cosa fa |
+|---|---|
+| `POST /conversazione` | un turno: riceve `cronologia`, `riassunto` e una `domanda` **oppure** un `prompt`; restituisce `risposta`, `strumenti_usati`, `cronologia` e `riassunto` aggiornati, `rifiutata`, `revisioni`, `messaggi_riassunti` |
+| `GET /prompts` | i prompt MCP con i loro argomenti |
+| `GET /stato` | `agente`, `server_mcp`, `modello`: 200 se tutto è `ok`, altrimenti 503 con il dettaglio |
 
-### Variante `fastapi`
+- **Senza stato:** il servizio non ricorda nulla tra due richieste. La cronologia la conserva chi chiama (la CLI, poi
+  il back-end dello step 7) e va sostituita con quella restituita, che può essere più corta per via del riassunto.
+- La cronologia scambiata contiene solo i messaggi da chat, `{"ruolo": "utente" | "assistente", "testo": "..."}`. Le
+  chiamate agli strumenti tornano a parte in `strumenti_usati`.
+- Il servizio esegue il grafo in streaming anche se risponde tutto insieme: così il timeout di 120 s del modello vale
+  tra un pezzo e l'altro della risposta e non sull'intera spiegazione (vedi la prova dello step 5).
+- Lo streaming fino al client non c'è ancora (slide 18, facoltativo): verrà valutato con il front-end.
 
-Il servizio va avviato prima, in un secondo terminale:
+Prova diretta da PowerShell (con il servizio avviato):
+
+```powershell
+Invoke-RestMethod http://localhost:8001/stato
+$corpo = @{ cronologia = @(); domanda = "Che ore sono a Tokyo?" } | ConvertTo-Json
+Invoke-RestMethod http://localhost:8001/conversazione -Method Post -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($corpo))
+```
+
+Errori:
+
+| Situazione | Codice | Messaggio (`detail`) |
+|---|---|---|
+| richiesta malformata, domanda e prompt entrambi o nessuno, ruolo sconosciuto | 422 | validazione di FastAPI |
+| prompt sconosciuto o argomenti non validi | 422 | es. «Argomento sconosciuto per «spiega»: colore...» |
+| LM Studio spento | 503 | «Connessione a LM Studio fallita: controllare server, URL e porta.» |
+| LM Studio troppo lento | 504 | «Attesa scaduta: LM Studio non ha risposto in tempo.» |
+| server MCP non disponibile per un prompt | 503 | «Errore di collegamento MCP: ...» |
+| troppi passaggi tra modello e strumenti | 500 | «Troppi passaggi tra modello e strumenti: turno interrotto.» |
+
+Un errore di uno strumento (per esempio un fuso inesistente) non è un errore HTTP: il modello lo riceve e lo riferisce.
+
+### Variante `fastapi` dell'orologio (lezione 5)
+
+Il servizio dell'orologio va avviato a parte, in un altro terminale:
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn assistente.servizio_api:app --port 8000
 ```
 
-Prova diretta del servizio: `Invoke-RestMethod "http://localhost:8000/orologio?fuso=Asia/Tokyo"`; documentazione
-OpenAPI interattiva su `http://localhost:8000/docs`. Poi, nel primo terminale, `VARIANTE_OROLOGIO=fastapi` nel `.env`
-e avvio normale.
+Prova diretta: `Invoke-RestMethod "http://localhost:8000/orologio?fuso=Asia/Tokyo"`; documentazione su
+`http://localhost:8000/docs`. Poi `VARIANTE_OROLOGIO=fastapi` nel `.env` e riavvio del servizio dell'agente.
 
 ## Avvio con Docker Compose
 
-LM Studio resta sul computer host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (impostato in
-`compose.yaml`). Serve il file `.env` della sezione Preparazione. Nel container sono previste le varianti `mcp` e
-`locale` (il server MCP gira come sottoprocesso dentro lo stesso container); la variante `fastapi` è documentata solo
-in locale. Non ancora verificato con Docker dopo la lezione 5 (Docker Desktop spento durante lo sviluppo).
+Dallo step 6 il container esegue il **servizio dell'agente** sulla porta 8001; la CLI gira sul computer host. LM Studio
+resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (impostato in `compose.yaml`). Serve
+il file `.env` della sezione Preparazione. Il server MCP parte come sottoprocesso dentro lo stesso container.
 
 ```powershell
-docker compose build
-docker compose run --rm --name assistente-demo assistente
+docker compose up -d --build
+Invoke-RestMethod http://localhost:8001/stato
+.\.venv\Scripts\python.exe -m assistente
+docker compose logs -f agente     # i log del grafo, in un altro terminale
+docker compose down
 ```
 
-Per vedere i log da un secondo terminale:
-
-```powershell
-docker logs -f assistente-demo
-```
-
-Verifica del contenuto dell'immagine (devono esserci solo `assistente` e `requirements.txt`):
-
-```powershell
-docker run --rm --entrypoint ls its-laboratorio-llm-assistente -a /app
-```
+Lo step 9 sostituirà questa configurazione con quattro container (front-end, back-end, agente, PostgreSQL), con
+l'agente non più esposto.
 
 ## Test
 
@@ -272,7 +317,9 @@ revisore; `riassumi_conversazione` dopo due turni.
 | «LOG_LEVEL non valido: «VERBOSE»...», codice 1 | Valori ammessi: DEBUG, INFO, WARNING, ERROR, CRITICAL (anche minuscoli). |
 | `docker compose build` fallisce in `pip install` con `CERTIFICATE_VERIFY_FAILED` | Causa verificata: l'antivirus AVG con scansione HTTPS (certificato «AVG Web/Mail Shield Root», accettato da Windows ma non dal container). In AVG disattiva la scansione HTTPS di Web Shield oppure aggiungi eccezioni per `pypi.org` e `files.pythonhosted.org`. Non usare `--trusted-host`. |
 | I log (stderr) si mescolano al testo in streaming | Problema noto, non risolto. Per nasconderli imposta `LOG_LEVEL=WARNING` nel `.env`. |
-| «Errore di collegamento al server MCP: ...», codice 1 | Il server MCP non è partito (slide 24, «processo non avviato»). Guarda `server_mcp.log` nella cartella del progetto: lì finisce lo stderr del server. Controlla che le dipendenze siano installate nel `.venv`. |
+| La CLI stampa «Servizio agente non raggiungibile su http://localhost:8001...» ed esce con codice 1 | Il servizio dell'agente non è avviato o è su un'altra porta. Avvialo con uvicorn (vedi Avvio locale) e controlla `AGENTE_URL`. |
+| La CLI stampa «Il servizio agente non è pronto: modello: ...» ed esce con codice 1 | Il servizio è partito ma LM Studio o il modello non sono disponibili (`GET /stato` lo mostra nel dettaglio). |
+| Il servizio non parte e nel suo terminale compare `ErroreCollegamentoMCP` | Il server MCP non è partito (slide 24, «processo non avviato»). Guarda `server_mcp.log` nella cartella del progetto: lì finisce lo stderr del server. Controlla che le dipendenze siano installate nel `.venv`. |
 | «VARIANTE_OROLOGIO non valida: ...», codice 1 | Valori ammessi: `locale`, `fastapi`, `mcp`. |
 | Lo strumento orologio risponde «Errore di collegamento al servizio orologio» | Variante `fastapi` con servizio spento o su un'altra porta. Avvia uvicorn (vedi sopra) e controlla `OROLOGIO_API_URL`. È diverso da «Errore: fuso orario sconosciuto», che indica un fuso sbagliato. |
 | Il container non raggiunge LM Studio | Non verificato su questa macchina (ha funzionato subito). Indicazione non verificata: abilita «Serve on Local Network» in LM Studio e controlla il firewall. |

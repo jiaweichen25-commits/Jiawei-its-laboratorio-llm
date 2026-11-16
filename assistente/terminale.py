@@ -1,48 +1,17 @@
-"""Interfaccia da terminale: legge le domande e mostra le risposte in streaming."""
+"""Interfaccia da terminale. Dalla lezione 6, step 6, è un CLIENT del servizio dell'agente.
+
+Il terminale non esegue più il grafo: manda ogni domanda al servizio (POST /conversazione)
+e mostra l'esito. La memoria della sessione (cronologia e riassunto) la tiene qui, perché
+il servizio è senza stato: a ogni turno la invia e la sostituisce con quella restituita.
+"""
 
 import logging
 import sys
 
-from langchain_core.messages import HumanMessage, RemoveMessage
-from langgraph.errors import GraphRecursionError
-
+from assistente.cliente_agente import ErroreServizio
 from assistente.comandi import ErroreComando, formatta_elenco, interpreta_prompt, valida_argomenti
 
 log = logging.getLogger("assistente.terminale")
-
-
-class _Uscita:
-    """Scrive sull'output ricordando se la riga corrente è rimasta a metà."""
-
-    def __init__(self, out):
-        self.out = out
-        self.a_meta_riga = False
-
-    def testo(self, frammento: str) -> None:
-        self.out.write(frammento)
-        self.out.flush()
-        self.a_meta_riga = not frammento.endswith("\n")
-
-    def riga(self, testo: str) -> None:
-        self.chiudi_riga()
-        self.out.write(testo + "\n")
-        self.out.flush()
-
-    def chiudi_riga(self) -> None:
-        if self.a_meta_riga:
-            self.out.write("\n")
-            self.a_meta_riga = False
-
-
-def _id_messaggi(grafo, config) -> set[str]:
-    return {m.id for m in grafo.get_state(config).values.get("messages", [])}
-
-
-def _annulla_turno(grafo, config, id_prima: set[str]) -> None:
-    """Toglie dalla cronologia i messaggi aggiunti da un turno fallito."""
-    nuovi = [m.id for m in grafo.get_state(config).values.get("messages", []) if m.id not in id_prima]
-    if nuovi:
-        grafo.update_state(config, {"messages": [RemoveMessage(id=i) for i in nuovi]}, as_node="modello")
 
 
 def formatta_traccia(nome: str, args: dict, risultato: str) -> str:
@@ -53,102 +22,76 @@ def formatta_traccia(nome: str, args: dict, risultato: str) -> str:
     return f"[strumento] {nome}({argomenti}) → {risultato}"
 
 
-def _turno(grafo, config, messaggi: list, uscita: _Uscita) -> None:
-    chiamate = {}  # tool_call_id → chiamata completa, dal messaggio del nodo modello
-    # `revisioni: 0` riporta a zero il contatore del revisore a ogni nuova domanda (lezione 6).
-    for modo, dati in grafo.stream(
-        {"messages": messaggi, "revisioni": 0}, config, stream_mode=["messages", "updates"]
-    ):
-        if modo == "messages":
-            frammento, meta = dati
-            if meta.get("langgraph_node") == "modello" and isinstance(frammento.content, str) and frammento.content:
-                uscita.testo(frammento.content)
-        elif "modello" in dati:
-            for chiamata in getattr(dati["modello"]["messages"][-1], "tool_calls", []):
-                chiamate[chiamata["id"]] = chiamata
-        elif "strumenti" in dati:
-            for risultato in dati["strumenti"]["messages"]:
-                chiamata = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
-                uscita.riga(formatta_traccia(chiamata["name"], chiamata["args"], risultato.content))
-        elif "riassunto" in dati:
-            # Sotto la soglia il nodo non scrive nulla; sopra, toglie i messaggi vecchi dallo stato.
-            tolti = len((dati["riassunto"] or {}).get("messages", []))
-            if tolti:
-                uscita.riga(f"[riassunto] cronologia compressa: {tolti} messaggi sostituiti")
-        elif "revisore" in dati:
-            # Un revisore che approva non scrive nulla nello stato: l'aggiornamento arriva vuoto.
-            for indicazione in (dati["revisore"] or {}).get("messages", []):
-                uscita.riga(f"[revisore] non coerente: {indicazione.additional_kwargs.get('motivo', '')}")
-        elif "rifiuto" in dati:
-            # Il rifiuto è un testo fisso: non arriva in streaming dal nodo modello, va stampato qui.
-            uscita.riga(dati["rifiuto"]["messages"][-1].content)
-    uscita.chiudi_riga()
+def _prompt_da_comando(riga: str, servizio) -> dict:
+    """Step 5: «/prompt nome a=b» → {"nome", "argomenti"}, controllato sull'elenco del servizio.
 
-
-def comando(riga: str, prompt_mcp) -> tuple[str | None, list]:
-    """Lezione 6, step 5: gestisce una riga che inizia con «/».
-
-    Restituisce (testo da mostrare, messaggi da mandare al grafo). Se c'è un testo da mostrare
-    il turno non parte: né il server né il modello vengono chiamati.
+    Il controllo si fa qui, prima di inviare: un errore non costa una chiamata al modello.
+    Il servizio lo ripete comunque, perché anche altri client (il back-end) lo useranno.
     """
-    nome_comando = riga.split(maxsplit=1)[0].lower()
-    if nome_comando not in ("/prompts", "/prompt"):
-        return f"Comando sconosciuto: {nome_comando}. Comandi disponibili: /prompts, /prompt, esci.", []
-    if prompt_mcp is None:
-        return "Prompt MCP non disponibili in questa sessione.", []
-    if nome_comando == "/prompts":
-        return formatta_elenco(prompt_mcp.elenco_prompt()), []
-    try:
-        nome, argomenti = interpreta_prompt(riga)
-        catalogo = {p.name: p for p in prompt_mcp.elenco_prompt()}
-        if nome not in catalogo:
-            raise ErroreComando(f"Prompt sconosciuto: «{nome}». Elenco con /prompts.")
-        valida_argomenti(catalogo[nome], argomenti)
-    except ErroreComando as exc:
-        return str(exc), []
-    try:
-        messaggi = prompt_mcp.ottieni_prompt(nome, argomenti)
-    except Exception as exc:  # ErroreCollegamentoMCP: server caduto o prompt rifiutato
-        return f"Errore di collegamento MCP: {exc}", []
-    log.info("prompt: /prompt %s argomenti=%s → %d messaggi al grafo", nome, argomenti, len(messaggi))
-    return None, messaggi
+    nome, argomenti = interpreta_prompt(riga)
+    catalogo = {p.name: p for p in servizio.prompts()}
+    if nome not in catalogo:
+        raise ErroreComando(f"Prompt sconosciuto: «{nome}». Elenco con /prompts.")
+    valida_argomenti(catalogo[nome], argomenti)
+    return {"nome": nome, "argomenti": argomenti}
 
 
-def conversa(grafo, config, leggi=input, out=sys.stdout, descrivi_errore=lambda exc: None, prompt_mcp=None) -> None:
-    uscita = _Uscita(out)
+def _mostra(esito: dict, scrivi) -> None:
+    """Stampa l'esito di un turno: prima le tracce (riassunto, strumenti, revisore), poi la risposta."""
+    if esito.get("messaggi_riassunti"):
+        scrivi(f"[riassunto] cronologia compressa: {esito['messaggi_riassunti']} messaggi sostituiti")
+    for s in esito.get("strumenti_usati", []):
+        scrivi(formatta_traccia(s["nome"], s["argomenti"], s["risultato"]))
+    for motivo in esito.get("revisioni", []):
+        scrivi(f"[revisore] non coerente: {motivo}")
+    scrivi(esito["risposta"])
+
+
+def conversa(servizio, leggi=input, out=sys.stdout) -> None:
+    """Ciclo della sessione. `servizio` è un ClienteAgente (nei test un finto con gli stessi metodi)."""
+
+    def scrivi(testo: str) -> None:
+        out.write(testo + "\n")
+        out.flush()
+
+    cronologia: list[dict] = []
+    riassunto = ""
     try:
         while True:
             try:
-                domanda = leggi("Tu> ").strip()
+                riga = leggi("Tu> ").strip()
             except EOFError:
-                uscita.riga("")
+                scrivi("")
                 return
-            if domanda.lower() == "esci":
+            if riga.lower() == "esci":
                 return
-            if not domanda:
+            if not riga:
                 continue
-            if domanda.startswith("/"):
-                avviso, messaggi = comando(domanda, prompt_mcp)
-                if avviso is not None:
-                    uscita.riga(avviso)
+
+            domanda, prompt = riga, None
+            if riga.startswith("/"):
+                nome_comando = riga.split(maxsplit=1)[0].lower()
+                try:
+                    if nome_comando == "/prompts":
+                        scrivi(formatta_elenco(servizio.prompts()))
+                        continue
+                    if nome_comando != "/prompt":
+                        scrivi(f"Comando sconosciuto: {nome_comando}. Comandi disponibili: /prompts, /prompt, esci.")
+                        continue
+                    domanda, prompt = None, _prompt_da_comando(riga, servizio)
+                except (ErroreComando, ErroreServizio) as exc:
+                    scrivi(str(exc))
                     continue
-            else:
-                messaggi = [HumanMessage(domanda)]
 
-            id_prima = _id_messaggi(grafo, config)
+            scrivi("[agente] in attesa della risposta...")
             try:
-                _turno(grafo, config, messaggi, uscita)
-            except GraphRecursionError:
-                messaggio = "Troppi passaggi tra modello e strumenti: turno interrotto."
-            except Exception as exc:
-                messaggio = descrivi_errore(exc)
-                if messaggio is None:
-                    raise
-            else:
+                esito = servizio.conversazione(cronologia, riassunto, domanda=domanda, prompt=prompt)
+            except ErroreServizio as exc:
+                # La cronologia resta quella di prima: il turno fallito non lascia tracce.
+                log.error("turno fallito: %s", exc)
+                scrivi(str(exc))
                 continue
-
-            log.error("turno fallito: %s", messaggio)
-            uscita.riga(messaggio)
-            _annulla_turno(grafo, config, id_prima)
+            cronologia, riassunto = esito["cronologia"], esito["riassunto"]
+            _mostra(esito, scrivi)
     except KeyboardInterrupt:
-        uscita.riga("")
+        scrivi("")
