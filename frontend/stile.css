@@ -1,0 +1,283 @@
+/* Aspetto dell'interfaccia di chat (lezione 6, step 8). Nessuna libreria. */
+
+/* I colori sono variabili: il tema scuro qui sotto cambia solo questi valori. */
+:root {
+  --sfondo: #f4f5f2;
+  --pannello: #ffffff;
+  --bordo: #d9dcd3;
+  --testo: #1d2420;
+  --testo-debole: #5c665f;
+  --accento: #1f6f5c;
+  --accento-testo: #ffffff;
+  --utente: #dff0ea;
+  --assistente: #ffffff;
+  --errore-sfondo: #fde8e6;
+  --errore-testo: #8a1c14;
+  --ok: #1f8a4c;
+  --ko: #c0392b;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sfondo: #151917;
+    --pannello: #1e2421;
+    --bordo: #343c37;
+    --testo: #e8ece9;
+    --testo-debole: #9aa59e;
+    --accento: #4fbf9f;
+    --accento-testo: #0c1512;
+    --utente: #24453b;
+    --assistente: #1e2421;
+    --errore-sfondo: #44201d;
+    --errore-testo: #ffb4ab;
+    --ok: #55c98a;
+    --ko: #ff7b6b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--sfondo);
+  color: var(--testo);
+  font: 16px/1.5 system-ui, "Segoe UI", sans-serif;
+}
+
+/* Due colonne: elenco delle chat a sinistra, conversazione a destra. */
+.pagina {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  height: 100dvh;
+}
+
+/* ---------------------------------------------------------------- colonna delle chat */
+
+.laterale {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--pannello);
+  border-right: 1px solid var(--bordo);
+  min-height: 0;
+}
+
+.marchio { margin: 0; font-size: 1.05rem; }
+
+.elenco-chat {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.voce-chat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+}
+
+.voce-chat.attiva { background: var(--utente); }
+
+.voce-chat .apri {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.voce-chat .apri:hover { background: color-mix(in srgb, var(--accento) 12%, transparent); }
+
+.voce-chat .titolo {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.voce-chat .data { display: block; font-size: 0.78rem; color: var(--testo-debole); }
+
+.voce-chat .azioni { display: flex; gap: 4px; padding-right: 6px; }
+
+.nota { margin: 0; color: var(--testo-debole); font-size: 0.9rem; }
+
+.stato-servizi {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--bordo);
+  font-size: 0.85rem;
+  color: var(--testo-debole);
+  overflow-wrap: anywhere;
+}
+
+.stato-servizi::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--testo-debole);
+}
+
+.stato-servizi.ok::before { background: var(--ok); }
+.stato-servizi.ko::before { background: var(--ko); }
+.stato-servizi.ko { color: var(--errore-testo); }
+
+/* ---------------------------------------------------------------- conversazione */
+
+.conversazione {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.intestazione { padding: 14px 24px; border-bottom: 1px solid var(--bordo); }
+
+.intestazione h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.messaggi {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 24px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.messaggio {
+  max-width: min(720px, 88%);
+  padding: 10px 14px;
+  border: 1px solid var(--bordo);
+  border-radius: 12px;
+  background: var(--assistente);
+  overflow-wrap: anywhere;
+}
+
+.messaggio.utente { align-self: flex-end; background: var(--utente); border-color: transparent; }
+.messaggio.assistente { align-self: flex-start; }
+
+/* pre-wrap: rispetta gli a capo scritti dal modello, senza interpretare il testo come HTML. */
+.messaggio .testo { margin: 0; white-space: pre-wrap; }
+
+.strumento, .annotazione, .attesa {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: var(--testo-debole);
+}
+
+.strumento { font-family: ui-monospace, Consolas, monospace; }
+.strumento:first-child, .annotazione:first-child, .attesa:first-child { margin-top: 0; }
+.messaggio .testo + .strumento { padding-top: 6px; border-top: 1px dashed var(--bordo); }
+
+.attesa::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: puntini 1.4s steps(4) infinite; }
+
+@keyframes puntini {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75% { content: "..."; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attesa::after { animation: none; content: "..."; }
+}
+
+.vuoto { margin: auto; max-width: 460px; text-align: center; color: var(--testo-debole); }
+.vuoto .esempi { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+
+/* ---------------------------------------------------------------- errore e casella di scrittura */
+
+.errore {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 24px 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--errore-sfondo);
+  color: var(--errore-testo);
+}
+
+.errore[hidden] { display: none; }
+.errore p { flex: 1; margin: 0; overflow-wrap: anywhere; }
+
+.modulo {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--bordo);
+  background: var(--pannello);
+}
+
+.modulo textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 180px;
+  padding: 10px 12px;
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  background: var(--sfondo);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
+.pulsante {
+  padding: 8px 14px;
+  border: 1px solid var(--bordo);
+  border-radius: 10px;
+  background: var(--pannello);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pulsante:hover:not(:disabled) { border-color: var(--accento); }
+.pulsante.primario { background: var(--accento); border-color: var(--accento); color: var(--accento-testo); font-weight: 600; }
+.pulsante.piccolo { padding: 3px 8px; font-size: 0.8rem; border-radius: 7px; }
+.pulsante.pericolo { border-color: var(--ko); color: var(--ko); }
+.pulsante:disabled, .modulo textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+
+:focus-visible { outline: 2px solid var(--accento); outline-offset: 2px; }
+
+/* Testo visibile solo ai lettori di schermo. */
+.solo-lettori {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- schermo stretto: una colonna */
+
+@media (max-width: 720px) {
+  .pagina { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .laterale { border-right: 0; border-bottom: 1px solid var(--bordo); padding: 12px 16px; max-height: 38dvh; }
+  .intestazione, .messaggi, .modulo { padding-left: 16px; padding-right: 16px; }
+  .errore { margin-left: 16px; margin-right: 16px; }
+}

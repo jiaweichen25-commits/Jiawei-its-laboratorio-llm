@@ -214,6 +214,71 @@ def test_troppi_passaggi():
         agente.rispondi([], domanda="ciclo")
 
 
+# ---------------------------------------------------------------- streaming (slide 18)
+
+def eventi_di(agente, domanda, cronologia=()):
+    return list(agente.eventi(list(cronologia), "", agente.prepara(domanda, None)))
+
+
+def test_eventi_testo_a_frammenti_poi_fine():
+    _, agente = agente_con(AIMessage("Sono le dieci"))
+
+    eventi = eventi_di(agente, "che ore sono?")
+
+    assert [dati["testo"] for tipo, dati in eventi if tipo == "testo"] == ["Sono ", "le ", "dieci"]
+    tipo, esito = eventi[-1]
+    assert tipo == "fine" and esito["risposta"] == "Sono le dieci"
+    assert esito["cronologia"][-1] == {"ruolo": "assistente", "testo": "Sono le dieci"}
+
+
+def test_eventi_con_strumento_tra_due_bozze():
+    prima = AIMessage("Controllo.", tool_calls=[{"name": "orologio", "args": {"fuso": "Asia/Tokyo"}, "id": "c1"}])
+    _, agente = agente_con(prima, AIMessage("Sono le 00:42."))
+
+    eventi = eventi_di(agente, "Che ore sono a Tokyo?")
+
+    assert [tipo for tipo, _ in eventi] == ["testo", "strumento", "testo", "testo", "testo", "fine"]
+    assert eventi[1][1] == {"nome": "orologio", "argomenti": {"fuso": "Asia/Tokyo"}, "risultato": ORA_TOKYO}
+    assert eventi[-1][1]["risposta"] == "Sono le 00:42."
+
+
+def test_eventi_revisione_tra_bozza_e_risposta_nuova():
+    _, agente = agente_con(
+        AIMessage("bozza"), json_ai(coerente=False, motivo="manca il calcolo"),
+        AIMessage("completa"), json_ai(coerente=True, motivo="ok"),
+        opzioni=OpzioniGrafo(limite_revisioni=2),
+    )
+
+    eventi = eventi_di(agente, "Ora e 12*8?")
+
+    assert [(t, d.get("testo") or d.get("motivo")) for t, d in eventi[:-1]] == [
+        ("testo", "bozza"), ("revisione", "manca il calcolo"), ("testo", "completa"),
+    ]  # il JSON del revisore non compare tra i frammenti di testo
+
+
+def test_eventi_rifiuto_arriva_come_testo():
+    _, agente = agente_con(json_ai(categoria="fuori_ambito", motivo="ricetta"), opzioni=OpzioniGrafo(ambito="ora"))
+
+    eventi = eventi_di(agente, "Una ricetta?")
+
+    assert eventi[0] == ("testo", {"testo": risposta_rifiuto("ora")})
+    assert eventi[-1][1]["rifiutata"] is True
+
+
+def test_eventi_riassunto():
+    _, agente = agente_con(
+        AIMessage("riassunto nuovo"), AIMessage("ok"),
+        opzioni=OpzioniGrafo(soglia_riassunto=4, messaggi_da_conservare=2),
+    )
+    cronologia = [{"ruolo": r, "testo": t} for r, t in
+                  [("utente", "d1"), ("assistente", "r1"), ("utente", "d2"), ("assistente", "r2")]]
+
+    eventi = eventi_di(agente, "d3", cronologia)
+
+    assert eventi[0] == ("riassunto", {"messaggi_riassunti": 2})
+    assert [d["testo"] for t, d in eventi if t == "testo"] == ["ok"]  # il testo del riassunto non è una risposta
+
+
 # ---------------------------------------------------------------- stato
 
 def test_stato_tutto_ok():

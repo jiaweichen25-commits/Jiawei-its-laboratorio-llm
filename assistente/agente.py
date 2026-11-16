@@ -9,8 +9,8 @@ HTTP e attraverso di lui la CLI o il back-end, decide che cosa farne e dove cons
 """
 
 import logging
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass, field
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
@@ -85,29 +85,46 @@ class Agente:
     def prompts(self) -> list:
         return self.prompt_mcp.elenco_prompt() if self.prompt_mcp is not None else []
 
-    def rispondi(
-        self,
-        cronologia: list[dict],
-        riassunto: str = "",
-        domanda: str | None = None,
-        prompt: tuple[str, dict[str, str]] | None = None,
-    ) -> EsitoTurno:
-        """Esegue un turno. Gli errori (modello, MCP, troppi passaggi) risalgono al chiamante."""
-        nuovi = [HumanMessage(domanda)] if prompt is None else self._messaggi_del_prompt(*prompt)
-        stato_iniziale = {"messages": da_cronologia(cronologia) + nuovi, "riassunto": riassunto, "revisioni": 0}
+    def prepara(self, domanda: str | None, prompt: tuple[str, dict[str, str]] | None) -> list[BaseMessage]:
+        """I messaggi nuovi del turno: la domanda, oppure quelli del prompt MCP (ErroreComando se non valido).
 
+        È separato dall'esecuzione perché il servizio in streaming deve poter rispondere 422 a un
+        prompt sbagliato PRIMA di aprire il flusso: dopo, il codice HTTP non si può più cambiare.
+        """
+        return [HumanMessage(domanda)] if prompt is None else self._messaggi_del_prompt(*prompt)
+
+    def eventi(self, cronologia: list[dict], riassunto: str, nuovi: list[BaseMessage]) -> Iterator[tuple[str, dict]]:
+        """Esegue un turno ed emette gli eventi man mano che accadono (slide 18, punto 01).
+
+        Eventi, come coppie (tipo, dati):
+          ("testo", {"testo"})                      un frammento della bozza che il modello sta scrivendo
+          ("strumento", {"nome","argomenti","risultato"})  uno strumento eseguito: la bozza corrente è finita
+          ("revisione", {"motivo"})                 il revisore ha bocciato la bozza: ne arriva un'altra
+          ("riassunto", {"messaggi_riassunti"})     la cronologia è stata compressa
+          ("fine", {...EsitoTurno...})              sempre l'ultimo
+        Gli errori (modello, MCP, troppi passaggi) risalgono al chiamante come eccezioni.
+        """
+        stato_iniziale = {"messages": da_cronologia(cronologia) + nuovi, "riassunto": riassunto, "revisioni": 0}
         esito = EsitoTurno(risposta="", cronologia=[], riassunto=riassunto)
         chiamate = {}  # tool_call_id → richiesta del modello, per abbinarla al risultato
         finale = stato_iniziale
-        # Si usa stream e non invoke: con la modalità «messages» il modello risponde a pezzi e il
-        # timeout di 120 s vale tra un pezzo e l'altro, non sull'intera risposta (prova dello step 5).
+        # Tre modalità insieme: «messages» porta i frammenti di testo del modello, «updates» ciò che
+        # ogni nodo ha scritto nello stato, «values» lo stato completo (serve quello finale).
+        # Con i frammenti, il timeout di 120 s del modello vale tra un pezzo e l'altro, non sull'intera
+        # risposta (prova dello step 5).
         for modo, dati in self.grafo.stream(
             stato_iniziale, {"recursion_limit": LIMITE_PASSAGGI}, stream_mode=["messages", "updates", "values"]
         ):
             if modo == "values":
                 finale = dati
-            elif modo == "updates":
-                self._registra(dati, chiamate, esito)
+            elif modo == "messages":
+                frammento, meta = dati
+                # Solo il nodo dell'agente: router, revisore e riassunto usano lo stesso modello,
+                # ma il loro testo (JSON o riassunto) non è una risposta per l'utente.
+                if meta.get("langgraph_node") == "modello" and isinstance(frammento.content, str) and frammento.content:
+                    yield "testo", {"testo": frammento.content}
+            else:
+                yield from self._registra(dati, chiamate, esito)
 
         esito.cronologia = a_cronologia(finale["messages"])
         esito.riassunto = finale.get("riassunto", riassunto) or ""
@@ -117,6 +134,20 @@ class Agente:
             "turno: strumenti=%s rifiutata=%s revisioni=%d riassunti=%d",
             [s["nome"] for s in esito.strumenti_usati], esito.rifiutata, len(esito.revisioni), esito.messaggi_riassunti,
         )
+        yield "fine", asdict(esito)
+
+    def rispondi(
+        self,
+        cronologia: list[dict],
+        riassunto: str = "",
+        domanda: str | None = None,
+        prompt: tuple[str, dict[str, str]] | None = None,
+    ) -> EsitoTurno:
+        """Un turno senza streaming: consuma gli stessi eventi e restituisce solo l'esito finale."""
+        esito = None
+        for tipo, dati in self.eventi(cronologia, riassunto, self.prepara(domanda, prompt)):
+            if tipo == "fine":
+                esito = EsitoTurno(**dati)
         return esito
 
     def _messaggi_del_prompt(self, nome: str, argomenti: dict[str, str]) -> list[BaseMessage]:
@@ -130,8 +161,8 @@ class Agente:
         return self.prompt_mcp.ottieni_prompt(nome, argomenti)
 
     @staticmethod
-    def _registra(aggiornamento: dict, chiamate: dict, esito: EsitoTurno) -> None:
-        """Legge l'aggiornamento di un nodo e annota ciò che il chiamante deve sapere."""
+    def _registra(aggiornamento: dict, chiamate: dict, esito: EsitoTurno) -> Iterator[tuple[str, dict]]:
+        """Legge l'aggiornamento di un nodo: annota l'esito ed emette gli eventi per chi ascolta."""
         for nodo, valori in aggiornamento.items():
             messaggi = (valori or {}).get("messages", [])  # un nodo che non cambia nulla manda None
             if nodo == "modello":
@@ -141,15 +172,22 @@ class Agente:
                 for risultato in messaggi:
                     if isinstance(risultato, ToolMessage):
                         richiesta = chiamate.get(risultato.tool_call_id, {"name": risultato.name, "args": {}})
-                        esito.strumenti_usati.append(
-                            {"nome": richiesta["name"], "argomenti": richiesta["args"], "risultato": risultato.content}
-                        )
+                        usato = {"nome": richiesta["name"], "argomenti": richiesta["args"], "risultato": risultato.content}
+                        esito.strumenti_usati.append(usato)
+                        yield "strumento", usato
             elif nodo == "revisore":
-                esito.revisioni += [m.additional_kwargs.get("motivo", "") for m in messaggi]
+                for indicazione in messaggi:
+                    motivo = indicazione.additional_kwargs.get("motivo", "")
+                    esito.revisioni.append(motivo)
+                    yield "revisione", {"motivo": motivo}
             elif nodo == "riassunto":
-                esito.messaggi_riassunti += len(messaggi)  # sono i RemoveMessage dei messaggi tolti
+                if messaggi:  # sono i RemoveMessage dei messaggi tolti
+                    esito.messaggi_riassunti += len(messaggi)
+                    yield "riassunto", {"messaggi_riassunti": len(messaggi)}
             elif nodo == "rifiuto":
                 esito.rifiutata = True
+                # Il rifiuto è un testo fisso, non generato dal modello: lo si emette intero.
+                yield "testo", {"testo": messaggi[-1].content}
 
     def stato(self) -> dict[str, str]:
         """Step 6, GET /stato: agente, server MCP e modello raggiungibili?"""

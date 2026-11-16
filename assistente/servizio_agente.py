@@ -7,7 +7,8 @@ Avvio (PowerShell, dalla cartella del progetto):
 Documentazione OpenAPI interattiva su http://localhost:8001/docs (generata da FastAPI).
 
 Endpoint:
-    POST /conversazione   un turno: cronologia + riassunto + domanda (o prompt) → risposta e cronologia aggiornata
+    POST /conversazione          un turno: cronologia + riassunto + domanda (o prompt) → risposta e cronologia aggiornata
+    POST /conversazione/stream   lo stesso turno in streaming (Server-Sent Events): il testo arriva mentre viene scritto
     GET  /prompts         i prompt MCP disponibili (per /prompts e /prompt della CLI)
     GET  /stato           agente, server MCP e modello raggiungibili?
 
@@ -15,6 +16,7 @@ Il servizio è SENZA STATO: non ricorda le conversazioni. Le conserva chi lo chi
 poi il back-end dello step 7).
 """
 
+import json
 import logging
 import os
 import sys
@@ -24,7 +26,7 @@ from typing import Literal
 import openai
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field, model_validator
 
@@ -111,6 +113,19 @@ def errore_http(exc: BaseException) -> HTTPException | None:
     return HTTPException(502, messaggio)  # LM Studio ha risposto con un errore HTTP
 
 
+def formatta_sse(tipo: str, dati: dict) -> str:
+    """Un evento Server-Sent Events: riga «event», riga «data» con il JSON, riga vuota che lo chiude."""
+    return f"event: {tipo}\ndata: {json.dumps(dati, ensure_ascii=False)}\n\n"
+
+
+DESCRIZIONE_EVENTI = (
+    "Flusso `text/event-stream`. Eventi: `testo` {testo} (frammento della bozza corrente), `strumento` "
+    "{nome, argomenti, risultato} (la bozza corrente è finita), `revisione` {motivo} (bozza bocciata, ne arriva "
+    "un'altra), `riassunto` {messaggi_riassunti}, `fine` (stesso corpo di POST /conversazione), `errore` "
+    "{codice, detail} (turno fallito dopo l'inizio del flusso)."
+)
+
+
 # ---------------------------------------------------------------------- applicazione
 
 def crea_app(agente: Agente | None = None) -> FastAPI:
@@ -159,6 +174,43 @@ def crea_app(agente: Agente | None = None) -> FastAPI:
             log.error("POST /conversazione: %d %s", http.status_code, http.detail)
             raise http from None
         return RispostaConversazione(**esito.__dict__)
+
+    @app.post(
+        "/conversazione/stream",
+        response_class=StreamingResponse,
+        responses={200: {"description": DESCRIZIONE_EVENTI, "content": {"text/event-stream": {}}}},
+    )
+    def conversazione_stream(richiesta: RichiestaConversazione) -> StreamingResponse:
+        """Lo stesso turno di POST /conversazione, ma il testo arriva mentre il modello lo scrive (slide 18)."""
+        prompt = (richiesta.prompt.nome, richiesta.prompt.argomenti) if richiesta.prompt else None
+        log.info("POST /conversazione/stream: %d messaggi, %s", len(richiesta.cronologia),
+                 f"prompt={prompt}" if prompt else f"domanda={richiesta.domanda!r}")
+        agente_app = app.state.agente
+        # Il prompt si controlla PRIMA di aprire il flusso: così un errore è ancora un normale 422.
+        try:
+            nuovi = agente_app.prepara(richiesta.domanda, prompt)
+        except Exception as exc:
+            http = errore_http(exc)
+            if http is None:
+                raise
+            raise http from None
+        cronologia = [m.model_dump() for m in richiesta.cronologia]
+
+        def flusso():
+            try:
+                for tipo, dati in agente_app.eventi(cronologia, richiesta.riassunto, nuovi):
+                    yield formatta_sse(tipo, dati)
+            except Exception as exc:
+                # La risposta 200 è già partita: l'errore non può più essere un codice HTTP,
+                # quindi viaggia come ultimo evento del flusso.
+                http = errore_http(exc)
+                codice, dettaglio = (http.status_code, http.detail) if http else (500, f"Errore interno: {type(exc).__name__}")
+                log.error("POST /conversazione/stream: errore a flusso aperto: %d %s", codice, dettaglio)
+                yield formatta_sse("errore", {"codice": codice, "detail": dettaglio})
+
+        # no-cache e X-Accel-Buffering: chiedono ai proxy (nginx allo step 9) di non trattenere gli eventi.
+        return StreamingResponse(flusso(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/prompts", response_model=list[DescrizionePrompt])
     def prompts() -> list[DescrizionePrompt]:

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assistente del laboratorio</title>
+  <link rel="stylesheet" href="stile.css">
+</head>
+<body>
+  <div class="pagina">
+
+    <!-- Colonna di sinistra: le chat salvate nel back-end -->
+    <aside class="laterale" aria-label="Le tue chat">
+      <h1 class="marchio">Assistente del laboratorio</h1>
+      <button id="nuova-chat" class="pulsante primario" type="button">+ Nuova chat</button>
+      <ul id="elenco-chat" class="elenco-chat"></ul>
+      <p id="elenco-vuoto" class="nota" hidden>Nessuna chat salvata.</p>
+      <p id="stato-servizi" class="stato-servizi" role="status">Controllo dei servizi…</p>
+    </aside>
+
+    <!-- Colonna di destra: i messaggi della chat scelta e la casella per scrivere -->
+    <main class="conversazione">
+      <header class="intestazione">
+        <h2 id="titolo-chat">Nuova chat</h2>
+      </header>
+
+      <!-- aria-live: chi usa un lettore di schermo viene avvisato quando arrivano messaggi -->
+      <section id="messaggi" class="messaggi" aria-live="polite" aria-label="Messaggi"></section>
+
+      <div id="errore" class="errore" role="alert" hidden>
+        <p id="errore-testo"></p>
+        <button id="errore-chiudi" class="pulsante" type="button">Chiudi</button>
+      </div>
+
+      <form id="modulo" class="modulo">
+        <label class="solo-lettori" for="testo">La tua domanda</label>
+        <textarea id="testo" rows="2" placeholder="Scrivi una domanda… (Invio per inviare, Maiusc+Invio per andare a capo)"></textarea>
+        <button id="invia" class="pulsante primario" type="submit">Invia</button>
+      </form>
+    </main>
+
+  </div>
+
+  <!-- Prima la configurazione (indirizzo del back-end), poi l'applicazione che la legge. -->
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

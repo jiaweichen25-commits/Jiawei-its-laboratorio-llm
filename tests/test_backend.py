@@ -48,18 +48,42 @@ class AgenteFinto:
             raise prossima
         if isinstance(prossima, httpx.Response):
             return prossima
-        return httpx.Response(200, json={
+        # Chiavi speciali per lo streaming: eventi intermedi, errore a metà, flusso troncato.
+        prossima = dict(prossima)
+        eventi, errore, tronca = prossima.pop("eventi", []), prossima.pop("errore", None), prossima.pop("tronca", False)
+        esito = {
             "risposta": "ok", "strumenti_usati": [], "cronologia": [], "riassunto": corpo["riassunto"],
             "rifiutata": False, "revisioni": [], "messaggi_riassunti": 0, **prossima,
-        })
+        }
+        if richiesta.url.path != "/conversazione/stream":
+            return httpx.Response(200, json=esito)
+        eventi = list(eventi)
+        if errore is not None:
+            eventi.append(("errore", errore))
+        elif not tronca:
+            eventi.append(("fine", esito))
+        testo = "".join(f"event: {tipo}\ndata: {json.dumps(dati, ensure_ascii=False)}\n\n" for tipo, dati in eventi)
+        return httpx.Response(200, content=testo.encode("utf-8"), headers={"content-type": "text/event-stream"})
 
 
-def ambiente(*risposte, url="sqlite://"):
+def ambiente(*risposte, url="sqlite://", cors_origini=()):
     finto = AgenteFinto(*risposte)
     archivio = Archivio(url, adesso=Orologio())
     archivio.prepara()
     agente = AgenteHttp("http://agente.test", transport=httpx.MockTransport(finto))
-    return TestClient(crea_app(archivio=archivio, agente=agente)), finto
+    return TestClient(crea_app(archivio=archivio, agente=agente, cors_origini=cors_origini)), finto
+
+
+def eventi_sse(testo: str) -> list[tuple[str, dict]]:
+    eventi = []
+    for blocco in testo.strip().split("\n\n"):
+        righe = dict(riga.split(": ", 1) for riga in blocco.splitlines())
+        eventi.append((righe["event"], json.loads(righe["data"])))
+    return eventi
+
+
+def invia_stream(client, chat_id, testo):
+    return client.post(f"/chat/{chat_id}/messaggi/stream", json={"testo": testo})
 
 
 def nuova_chat(client) -> str:
@@ -260,7 +284,8 @@ def test_stato_con_agente_spento_503():
 
     r = client.get("/stato")
 
-    assert r.status_code == 503 and r.json()["database"] == "ok" and r.json()["agente"] != "ok"
+    assert r.status_code == 503 and r.json()["database"] == "ok"
+    assert r.json()["agente"] == "non raggiungibile su http://agente.test"  # breve: finisce nell'interfaccia
 
 
 def test_stato_con_agente_non_pronto_503():
@@ -277,7 +302,9 @@ def test_documentazione_openapi():
 
     percorsi = client.get("/openapi.json").json()["paths"]
 
-    assert set(percorsi) == {"/chat", "/chat/{chat_id}", "/chat/{chat_id}/messaggi", "/stato"}
+    assert set(percorsi) == {
+        "/chat", "/chat/{chat_id}", "/chat/{chat_id}/messaggi", "/chat/{chat_id}/messaggi/stream", "/stato",
+    }
     assert set(percorsi["/chat"]) == {"get", "post"} and set(percorsi["/chat/{chat_id}"]) == {"get", "delete"}
 
 
@@ -293,6 +320,133 @@ def test_le_chat_restano_dopo_il_riavvio(tmp_path):
     chat = riavviato.get(f"/chat/{chat_id}").json()
     assert [m["testo"] for m in chat["messaggi"]] == ["d1", "r1"] and chat["titolo"] == "d1"
     riavviato.app.state.archivio.chiudi()
+
+
+# ---------------------------------------------------------------- streaming (slide 18)
+
+STRUMENTO = {"nome": "orologio", "argomenti": {"fuso": "Asia/Tokyo"}, "risultato": "00:42"}
+
+
+def test_stream_inoltra_gli_eventi_e_salva_alla_fine():
+    client, finto = ambiente({
+        "eventi": [("strumento", STRUMENTO), ("testo", {"testo": "Sono le "}), ("testo", {"testo": "00:42."})],
+        "risposta": "Sono le 00:42.", "strumenti_usati": [STRUMENTO],
+    })
+    chat_id = nuova_chat(client)
+
+    r = invia_stream(client, chat_id, "Che ore sono a Tokyo?")
+
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    eventi = eventi_sse(r.text)
+    assert eventi[:3] == [("strumento", STRUMENTO), ("testo", {"testo": "Sono le "}), ("testo", {"testo": "00:42."})]
+    tipo, scambio = eventi[-1]
+    assert tipo == "fine" and len(eventi) == 4
+    assert scambio["risposta"]["testo"] == "Sono le 00:42." and scambio["risposta"]["strumenti"] == [STRUMENTO]
+    assert scambio["chat"]["titolo"] == "Che ore sono a Tokyo?"
+    assert [m["testo"] for m in client.get(f"/chat/{chat_id}").json()["messaggi"]] == ["Che ore sono a Tokyo?", "Sono le 00:42."]
+    assert finto.richieste[0]["domanda"] == "Che ore sono a Tokyo?"
+
+
+def test_stream_errore_dell_agente_a_meta_non_salva():
+    client, _ = ambiente({
+        "eventi": [("testo", {"testo": "Sto"})],
+        "errore": {"codice": 503, "detail": "Connessione a LM Studio fallita."},
+    })
+    chat_id = nuova_chat(client)
+
+    eventi = eventi_sse(invia_stream(client, chat_id, "ciao").text)
+
+    assert eventi[-1][0] == "errore" and eventi[-1][1]["codice"] == 502
+    assert "Connessione a LM Studio fallita" in eventi[-1][1]["detail"]
+    assert "non è stato salvato" in eventi[-1][1]["detail"]
+    assert client.get(f"/chat/{chat_id}").json()["messaggi"] == []
+
+
+def test_stream_troncato_non_salva():
+    client, _ = ambiente({"eventi": [("testo", {"testo": "Sto"})], "tronca": True})
+    chat_id = nuova_chat(client)
+
+    eventi = eventi_sse(invia_stream(client, chat_id, "ciao").text)
+
+    assert eventi[-1][0] == "errore" and "non è stato salvato" in eventi[-1][1]["detail"]
+    assert client.get(f"/chat/{chat_id}").json()["messaggi"] == []
+
+
+def test_stream_agente_spento_resta_un_503():
+    client, _ = ambiente(httpx.ConnectError("rifiutata"))
+    chat_id = nuova_chat(client)
+
+    r = invia_stream(client, chat_id, "ciao")
+
+    assert r.status_code == 503 and "non è stato salvato" in r.json()["detail"]
+
+
+def test_stream_errore_dell_agente_prima_del_flusso_resta_un_502():
+    client, _ = ambiente(httpx.Response(422, json={"detail": "richiesta non valida"}))
+    chat_id = nuova_chat(client)
+
+    r = invia_stream(client, chat_id, "ciao")
+
+    assert r.status_code == 502 and "richiesta non valida" in r.json()["detail"]
+
+
+def test_stream_chat_inesistente_e_testo_vuoto():
+    client, finto = ambiente()
+
+    assert invia_stream(client, "non-esiste", "ciao").status_code == 404
+    assert invia_stream(client, nuova_chat(client), "  ").status_code == 422
+    assert finto.richieste == []
+
+
+def test_stream_usa_e_aggiorna_il_riassunto():
+    client, finto = ambiente(
+        {"risposta": "r1"},
+        {"risposta": "r2", "riassunto": "riassunto", "messaggi_riassunti": 2,
+         "eventi": [("riassunto", {"messaggi_riassunti": 2})]},
+        {"risposta": "r3"},
+    )
+    chat_id = nuova_chat(client)
+    for domanda in ("d1", "d2", "d3"):
+        invia_stream(client, chat_id, domanda)
+
+    assert finto.richieste[2]["riassunto"] == "riassunto"
+    assert [m["testo"] for m in finto.richieste[2]["cronologia"]] == ["d2", "r2"]
+
+
+# ---------------------------------------------------------------- CORS (step 8: la pagina sta su un'altra porta)
+
+def test_cors_origine_ammessa_e_non_ammessa():
+    client, _ = ambiente(cors_origini=("http://localhost:8003",))
+
+    ammessa = client.get("/chat", headers={"Origin": "http://localhost:8003"})
+    estranea = client.get("/chat", headers={"Origin": "http://altro.example"})
+
+    assert ammessa.headers.get("access-control-allow-origin") == "http://localhost:8003"
+    assert "access-control-allow-origin" not in estranea.headers
+
+
+def test_cors_spento_senza_configurazione():
+    client, _ = ambiente()
+
+    assert "access-control-allow-origin" not in client.get("/chat", headers={"Origin": "http://localhost:8003"}).headers
+
+
+def test_cors_preflight_per_l_invio():
+    client, _ = ambiente(cors_origini=("http://localhost:8003",))
+
+    r = client.options("/chat/x/messaggi/stream", headers={
+        "Origin": "http://localhost:8003", "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    })
+
+    assert r.status_code == 200 and "POST" in r.headers["access-control-allow-methods"]
+
+
+def test_configurazione_cors():
+    c = carica_configurazione({"DATABASE_URL": "sqlite://", "CORS_ORIGINI": " http://localhost:8003/ , http://127.0.0.1:8003 "})
+
+    assert c.cors_origini == ("http://localhost:8003", "http://127.0.0.1:8003")
+    assert carica_configurazione({"DATABASE_URL": "sqlite://"}).cors_origini == ()
 
 
 # ---------------------------------------------------------------- configurazione

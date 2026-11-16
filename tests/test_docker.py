@@ -44,6 +44,8 @@ def test_compose_servizio_agente_con_orologio():
         risposta = httpx.post(f"{URL}/conversazione", json={"domanda": "Che ore sono a Tokyo?"}, timeout=600)
 
         assert risposta.status_code == 200, risposta.text
-        assert any(s["nome"] == "orologio" for s in risposta.json()["strumenti_usati"]), risposta.json()
+        usati = risposta.json()["strumenti_usati"]
+        assert any(s["nome"] == "orologio" for s in usati), risposta.json()
+        assert not any(s["risultato"].startswith("Errore") for s in usati), usati  # ha risposto, non solo «è stato chiamato»
     finally:
         compose("down")

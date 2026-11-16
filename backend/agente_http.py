@@ -5,6 +5,9 @@ Distingue due situazioni che il back-end tratta in modo diverso (slide 14, «err
   - ErroreAgente: ha risposto, ma con un errore (es. LM Studio spento) → 502 con il suo messaggio.
 """
 
+import json
+from collections.abc import Iterator
+
 import httpx
 
 
@@ -45,13 +48,61 @@ class AgenteHttp:
             raise ErroreAgente(risposta.status_code, str(dettaglio))
         return risposta.json()
 
+    # ------------------------------------------------------------------ streaming (step 8, slide 18)
+
+    def apri_stream(self, cronologia: list[dict], riassunto: str, domanda: str) -> httpx.Response:
+        """POST /conversazione/stream: apre il flusso e restituisce la risposta ancora «aperta».
+
+        Collegamento e codice HTTP si controllano qui, prima di cominciare a leggere: così il
+        back-end può ancora rispondere al browser con un normale 503 o 502.
+        """
+        corpo = {"cronologia": cronologia, "riassunto": riassunto, "domanda": domanda, "prompt": None}
+        try:
+            risposta = self._http.send(self._http.build_request("POST", "/conversazione/stream", json=corpo), stream=True)
+        except httpx.HTTPError as exc:
+            raise AgenteNonRaggiungibile(f"{type(exc).__name__}: {exc}") from exc
+        if risposta.status_code >= 400:
+            try:
+                risposta.read()
+                try:
+                    dettaglio = risposta.json().get("detail", risposta.text)
+                except ValueError:
+                    dettaglio = risposta.text
+            finally:
+                risposta.close()
+            raise ErroreAgente(risposta.status_code, str(dettaglio))
+        return risposta
+
+    @staticmethod
+    def eventi(risposta: httpx.Response) -> Iterator[tuple[str, dict]]:
+        """Legge il flusso Server-Sent Events riga per riga ed emette le coppie (tipo, dati).
+
+        Formato di un evento:   event: testo
+                                data: {"testo": "Sono "}
+                                (riga vuota = fine dell'evento)
+        """
+        tipo, dati = None, None
+        try:
+            for riga in risposta.iter_lines():
+                if riga.startswith("event:"):
+                    tipo = riga[len("event:"):].strip()
+                elif riga.startswith("data:"):
+                    dati = riga[len("data:"):].strip()
+                elif not riga and tipo is not None and dati is not None:
+                    yield tipo, json.loads(dati)
+                    tipo, dati = None, None
+        except httpx.HTTPError as exc:  # collegamento caduto a metà risposta
+            raise AgenteNonRaggiungibile(f"{type(exc).__name__}: {exc}") from exc
+        finally:
+            risposta.close()
+
     def stato(self) -> str:
         """«ok» se l'agente è pronto, altrimenti una frase che dice che cosa manca."""
         try:
             risposta = self._richiesta("GET", "/stato", timeout=10.0)
             valori = risposta.json()
-        except AgenteNonRaggiungibile as exc:
-            return f"non raggiungibile su {self.url} ({exc})"
+        except AgenteNonRaggiungibile:
+            return f"non raggiungibile su {self.url}"
         except ValueError:
             return f"risposta inattesa da {self.url}/stato"
         problemi = {k: v for k, v in valori.items() if v != "ok"}

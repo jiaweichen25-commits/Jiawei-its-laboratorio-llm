@@ -1,0 +1,9 @@
+{
+  "name": "frontend-assistente",
+  "private": true,
+  "type": "module",
+  "description": "Interfaccia di chat (lezione 6, step 8). Nessuna dipendenza: questo file serve solo a dire a Node che i .js sono moduli, per i test.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -22,7 +22,7 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
 `strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
-`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `backend/` (`app.py`, `archivio.py`, `agente_http.py`, `config.py`, `requirements.txt`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `backend/` (`app.py`, `archivio.py`, `agente_http.py`, `config.py`, `requirements.txt`), `frontend/` (`index.html`, `stile.css`, `config.js`, `api.js`, `app.js`, `test/`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -174,7 +174,7 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
    `AMBITO_AGENTE` (di che cosa si occupa l'agente), `LIMITE_REVISIONI` (predefinito 2; 0 spegne il revisore),
    `SOGLIA_RIASSUNTO` (predefinito 12 messaggi; 0 spegne il riassunto), `MESSAGGI_DA_CONSERVARE` (predefinito 6),
    `PREFERENZE_FILE`, `AGENTE_URL` e `AGENTE_TIMEOUT` (CLI e back-end). Per il back-end (step 7): `POSTGRES_USER`,
-   `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`, con una password a scelta.
+   `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`, con una password a scelta, e `CORS_ORIGINI` (step 8).
 
 3. In LM Studio carica un modello e avvia il server locale. Leggi gli ID disponibili e copia quello scelto in
    `LM_MODEL` nel file `.env` (l'ID è quello restituito dal server, non va inventato):
@@ -217,6 +217,7 @@ CLI (python -m assistente) ──HTTP──▶ servizio agente (porta 8001) ─�
 
 | Endpoint | Cosa fa |
 |---|---|
+| `POST /conversazione/stream` | lo stesso turno in streaming (vedi step 8) |
 | `POST /conversazione` | un turno: riceve `cronologia`, `riassunto` e una `domanda` **oppure** un `prompt`; restituisce `risposta`, `strumenti_usati`, `cronologia` e `riassunto` aggiornati, `rifiutata`, `revisioni`, `messaggi_riassunti` |
 | `GET /prompts` | i prompt MCP con i loro argomenti |
 | `GET /stato` | `agente`, `server_mcp`, `modello`: 200 se tutto è `ok`, altrimenti 503 con il dettaglio |
@@ -275,6 +276,7 @@ Documentazione OpenAPI interattiva su `http://localhost:8002/docs`.
 | Elencare le chat | `GET /chat` | titolo, `aggiornata_il` (data dell'ultimo messaggio) e numero di messaggi, dalla più recente |
 | Leggere una chat | `GET /chat/{id}` | la chat con i messaggi in ordine cronologico |
 | Inviare un messaggio | `POST /chat/{id}/messaggi` con `{"testo": "..."}` | `domanda`, `risposta` (con gli `strumenti` usati) e la `chat` aggiornata |
+| Inviare in streaming | `POST /chat/{id}/messaggi/stream` | gli stessi dati come eventi (vedi step 8) |
 | Eliminare una chat | `DELETE /chat/{id}` | 204; spariscono anche i suoi messaggi |
 | Stato | `GET /stato` | `backend`, `database`, `agente`: 200 se tutto è `ok`, altrimenti 503 |
 
@@ -301,6 +303,60 @@ $corpo = @{ testo = "Che ore sono a Tokyo?" } | ConvertTo-Json
 Invoke-RestMethod "http://localhost:8002/chat/$($chat.id)/messaggi" -Method Post -ContentType "application/json; charset=utf-8" -Body ([Text.Encoding]::UTF8.GetBytes($corpo))
 Invoke-RestMethod http://localhost:8002/chat
 ```
+
+### Step 8 · Front-end: interfaccia di chat, con streaming
+
+Una pagina web (cartella `frontend/`) in HTML, CSS e JavaScript senza librerie, che parla **solo con il back-end**.
+Con PostgreSQL, agente e back-end avviati:
+
+```powershell
+.\.venv\Scripts\python.exe -m http.server 8003 --directory frontend
+```
+
+poi `http://localhost:8003` nel browser.
+
+- A sinistra l'elenco delle chat (dalla più recente), il pulsante «+ Nuova chat» e, per ogni chat, «×» per
+  eliminarla (chiede conferma nella pagina). In basso lo stato dei servizi, letto da `GET /stato`.
+- A destra i messaggi della chat scelta e la casella per scrivere (Invio manda, Maiusc+Invio va a capo). Sotto ogni
+  risposta compaiono gli strumenti usati dall'agente.
+- Durante la risposta la casella è disattivata e compare «L'agente sta rispondendo · N s» con i secondi trascorsi.
+- Se l'invio fallisce compare un riquadro con il messaggio del back-end (per esempio «Agente non raggiungibile: il
+  messaggio non è stato salvato, riprova.»), la domanda torna nella casella e la pagina resta utilizzabile.
+- **Indirizzo del back-end:** sta solo in `frontend/config.js` (`backendUrl`). Per usare un altro back-end si cambia
+  quella riga.
+- **CORS:** in locale pagina (porta 8003) e back-end (porta 8002) sono due origini diverse. Il back-end accetta le
+  chiamate solo dalle origini elencate in `CORS_ORIGINI` nel `.env` (`http://localhost:8003`).
+- Il testo del modello entra nella pagina come testo semplice (`textContent`), mai come HTML.
+
+File: `index.html` (struttura), `stile.css` (aspetto, tema chiaro e scuro), `config.js` (indirizzo del back-end),
+`api.js` (una funzione per ogni operazione del documento OpenAPI del back-end, più la lettura dello streaming),
+`app.js` (logica della pagina), `test/api.test.js` (test con il test runner integrato di Node).
+
+#### Streaming (slide 18)
+
+```
+agente  POST /conversazione/stream   ──SSE──▶   back-end  POST /chat/{id}/messaggi/stream   ──SSE──▶   browser
+```
+
+La risposta HTTP resta aperta e porta una sequenza di eventi (Server-Sent Events: `event: <tipo>` + `data: <JSON>`):
+
+| Evento | Dati | Significato |
+|---|---|---|
+| `testo` | `{"testo"}` | un frammento della bozza che il modello sta scrivendo |
+| `strumento` | `{"nome", "argomenti", "risultato"}` | l'agente ha usato uno strumento; la bozza corrente è finita |
+| `revisione` | `{"motivo"}` | il revisore ha bocciato la bozza: viene scartata e ne arriva un'altra |
+| `riassunto` | `{"messaggi_riassunti"}` | la cronologia è stata compressa |
+| `fine` | agente: l'esito del turno; back-end: `domanda`, `risposta`, `chat` salvati | il turno è finito |
+| `errore` | `{"codice", "detail"}` | il turno è fallito a flusso aperto; nulla è stato salvato |
+
+- **Agente:** emette i frammenti man mano che il modello li genera, insieme agli eventi degli strumenti.
+- **Back-end:** inoltra gli eventi e salva domanda e risposta solo all'evento `fine`. Gli errori che avvengono prima
+  dell'apertura del flusso restano normali risposte HTTP (404, 422, 502, 503).
+- **Front-end:** mostra il testo mentre arriva e indica gli strumenti appena vengono usati.
+- **Decisione con il revisore attivo:** la bozza si mostra mentre viene scritta. Se il revisore la boccia, la bozza
+  viene tolta, compare «Il revisore ha chiesto una correzione: <motivo>» e parte la risposta nuova. Il motivo della
+  scelta: con un modello locale lento, mostrare solo la risposta approvata vorrebbe dire minuti di schermo fermo.
+- Gli endpoint senza streaming (`POST /conversazione`, `POST /chat/{id}/messaggi`) restano: li usano la CLI e i test.
 
 ### Variante `fastapi` dell'orologio (lezione 5)
 
@@ -365,6 +421,11 @@ Step 6: `test_agente.py`, `test_servizio_agente.py`, `test_cliente_agente.py`, `
 `test_backend.py` (database SQLite in memoria e agente simulato con `httpx.MockTransport`: le cinque operazioni,
 errori, riassunto, persistenza su file) e `test_backend_reali.py` (marker `docker`: PostgreSQL vero, chat presente
 dopo il riavvio del back-end e del container; marker `lmstudio`: back-end → agente → LM Studio con l'orologio).
+Step 8: streaming in `test_agente.py`, `test_servizio_agente.py` e `test_backend.py` (eventi nell'ordine giusto, errore a
+flusso aperto, salvataggio solo alla fine, CORS); `test_frontend.py` (i percorsi usati da `api.js` esistono
+nell'OpenAPI del back-end, l'indirizzo sta solo in `config.js`, nessun inserimento di HTML) che esegue anche i test
+JavaScript: dalla cartella `frontend/`, `node --test` (lettura degli eventi spezzati tra due pacchetti, chiamate, errori).
+Le prove reali controllano che lo strumento abbia risposto, non solo che sia stato chiamato.
 
 ## Diagnosi
 
@@ -389,8 +450,11 @@ dopo il riavvio del back-end e del container; marker `lmstudio`: back-end → ag
 - Lezione 6: router e revisore aggiungono una chiamata al modello ciascuno, quindi ogni domanda richiede più tempo
   (con gemma-4-e4b sulla macchina di prova da 10 a 35 secondi per chiamata).
 - Lezione 6: le risposte lunghe, come quella di `/prompt spiega`, possono richiedere minuti (260 s nella prova
-  reale). Il terminale funziona perché riceve la risposta in streaming; una chiamata senza streaming (`invoke`)
-  supera invece il timeout di 120 s del modello. Va tenuto presente per lo step 6 (agente come servizio HTTP).
+  reale). L'agente esegue sempre il grafo in streaming, così il timeout di 120 s del modello vale tra un frammento
+  e l'altro e non sull'intera risposta.
+- Streaming: la CLI non lo usa ancora (mostra la risposta completa). Se il browser chiude la pagina a metà di una
+  risposta, quello scambio non viene salvato. Prima che compaia il primo testo passano comunque decine di secondi,
+  perché il router fa una chiamata intera al modello.
 - Lezione 6: con un modello da 4B le risposte che dipendono dal riassunto non sono sempre affidabili; a volte il
   modello risponde di non conoscere un'informazione che ha nel messaggio di sistema. Il codice passa il riassunto
   correttamente (verificato catturando la richiesta inviata a LM Studio).

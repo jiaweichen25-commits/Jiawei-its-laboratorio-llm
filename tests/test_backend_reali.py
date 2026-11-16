@@ -6,6 +6,7 @@
 Serve `docker compose up -d postgres` (la prova docker lo avvia da sola) e il file .env con DATABASE_URL.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -113,7 +114,7 @@ def aspetta_stato(url: str, processo: subprocess.Popen, tentativi: int = 120) ->
 
 
 @pytest.mark.lmstudio
-def test_backend_reale_domanda_con_strumento_salvata_e_riletta(database_url):
+def test_backend_reale_domande_con_strumenti_anche_in_streaming(database_url):
     # Catena intera: back-end → servizio dell'agente → LM Studio, con PostgreSQL vero.
     aspetta_postgres(database_url, secondi=5)
     agente_url, backend_url = "http://127.0.0.1:8011", "http://127.0.0.1:8012"
@@ -128,17 +129,38 @@ def test_backend_reale_domanda_con_strumento_salvata_e_riletta(database_url):
         r = httpx.post(f"{backend_url}/chat/{chat_id}/messaggi", json={"testo": "Che ore sono a Tokyo?"}, timeout=600)
 
         assert r.status_code == 200, r.text
-        assert any(s["nome"] == "orologio" and s["argomenti"].get("fuso") == "Asia/Tokyo"
-                   for s in r.json()["risposta"]["strumenti"]), r.json()
+        strumenti = r.json()["risposta"]["strumenti"]
+        assert any(s["nome"] == "orologio" and s["argomenti"].get("fuso") == "Asia/Tokyo" for s in strumenti), r.json()
+        # Lo strumento deve aver risposto davvero: un «Errore di collegamento...» non è un successo.
+        assert not any(s["risultato"].startswith("Errore") for s in strumenti), strumenti
 
-        # Riavvio del back-end: la chat, con lo strumento usato, è ancora nel database.
+        # Step 8, slide 18: la seconda domanda in streaming. Gli eventi attraversano agente e back-end.
+        eventi = []
+        with httpx.stream("POST", f"{backend_url}/chat/{chat_id}/messaggi/stream",
+                          json={"testo": "Quanto fa 12 * 8? Usa la calcolatrice."}, timeout=600) as flusso:
+            assert flusso.status_code == 200 and flusso.headers["content-type"].startswith("text/event-stream")
+            tipo = None
+            for riga in flusso.iter_lines():
+                if riga.startswith("event:"):
+                    tipo = riga[6:].strip()
+                elif riga.startswith("data:"):
+                    eventi.append((tipo, json.loads(riga[5:])))
+        tipi = [tipo for tipo, _ in eventi]
+        assert tipi[-1] == "fine" and "errore" not in tipi, eventi
+        assert ("strumento", {"nome": "calcola", "argomenti": {"espressione": "12 * 8"}, "risultato": "12 * 8 = 96"}) in eventi
+        assert tipi.count("testo") >= 2, tipi  # il testo è arrivato a frammenti, non tutto insieme
+        assert tipi.index("strumento") < len(tipi) - 1 - tipi[::-1].index("testo")  # lo strumento prima dell'ultimo testo
+        assert "96" in eventi[-1][1]["risposta"]["testo"]
+
+        # Riavvio del back-end: la chat, con gli strumenti usati, è ancora nel database.
         backend.terminate()
         backend.wait(30)
         backend = avvia_uvicorn("backend.app:app", 8012, {"AGENTE_URL": agente_url})
         aspetta_stato(backend_url, backend)
         chat = httpx.get(f"{backend_url}/chat/{chat_id}").json()
-        assert [m["ruolo"] for m in chat["messaggi"]] == ["utente", "assistente"]
+        assert [m["ruolo"] for m in chat["messaggi"]] == ["utente", "assistente", "utente", "assistente"]
         assert chat["messaggi"][1]["strumenti"][0]["nome"] == "orologio"
+        assert chat["messaggi"][3]["strumenti"][0]["nome"] == "calcola"
     finally:
         if chat_id is not None and backend.poll() is None:
             httpx.delete(f"{backend_url}/chat/{chat_id}")

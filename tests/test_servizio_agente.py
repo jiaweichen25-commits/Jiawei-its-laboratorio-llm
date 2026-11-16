@@ -93,6 +93,60 @@ def test_troppi_passaggi_500():
     assert r.status_code == 500 and "Troppi passaggi" in r.json()["detail"]
 
 
+# ---------------------------------------------------------------- streaming (slide 18)
+
+def eventi_sse(testo: str) -> list[tuple[str, dict]]:
+    """Da «event: x / data: {...}» separati da righe vuote a una lista di (tipo, dati)."""
+    import json
+
+    eventi = []
+    for blocco in testo.strip().split("\n\n"):
+        righe = dict(riga.split(": ", 1) for riga in blocco.splitlines())
+        eventi.append((righe["event"], json.loads(righe["data"])))
+    return eventi
+
+
+def test_stream_eventi_sse_con_strumento():
+    client = client_con(chiamata("Asia/Tokyo"), AIMessage("Sono le 00:42."))
+
+    r = client.post("/conversazione/stream", json={"domanda": "Che ore sono a Tokyo?"})
+
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+    eventi = eventi_sse(r.text)
+    assert [tipo for tipo, _ in eventi] == ["strumento", "testo", "testo", "testo", "fine"]
+    assert "".join(d["testo"] for t, d in eventi if t == "testo") == "Sono le 00:42."
+    assert eventi[-1][1]["strumenti_usati"][0]["risultato"] == ORA_TOKYO
+
+
+def test_stream_errore_a_meta_diventa_evento_errore():
+    richiesta = httpx.Request("POST", "http://localhost:1234/v1/chat/completions")
+    client = client_con(chiamata("Asia/Tokyo"), openai.APIConnectionError(request=richiesta))
+
+    r = client.post("/conversazione/stream", json={"domanda": "Che ore sono a Tokyo?"})
+
+    assert r.status_code == 200  # il flusso era già iniziato: l'errore viaggia come evento
+    eventi = eventi_sse(r.text)
+    assert eventi[-1][0] == "errore"
+    assert eventi[-1][1]["codice"] == 503 and "LM Studio" in eventi[-1][1]["detail"]
+    assert "fine" not in [tipo for tipo, _ in eventi]
+
+
+def test_stream_prompt_non_valido_resta_un_422():
+    client = client_con(prompt_mcp=PromptFinti())
+
+    r = client.post("/conversazione/stream", json={"prompt": {"nome": "spiega", "argomenti": {"colore": "blu"}}})
+
+    assert r.status_code == 422 and "colore" in r.json()["detail"]
+
+
+def test_stream_con_caratteri_non_ascii():
+    client = client_con(AIMessage("Perché è così — «già»."))
+
+    eventi = eventi_sse(client.post("/conversazione/stream", json={"domanda": "x"}).text)
+
+    assert eventi[-1][1]["risposta"] == "Perché è così — «già»."
+
+
 def test_elenco_prompt():
     client = client_con(prompt_mcp=PromptFinti())
 

@@ -16,6 +16,10 @@ class Configurazione:
     agente_url: str = "http://localhost:8001"   # AGENTE_URL: il servizio dell'agente (step 6)
     agente_timeout: float = 600.0               # AGENTE_TIMEOUT, secondi: le risposte lunghe durano minuti
     log_level: str = "INFO"                     # LOG_LEVEL
+    # Step 8 — CORS_ORIGINI: da quali indirizzi una pagina web può chiamare il back-end, separati da
+    # virgole (es. http://localhost:8003). Vuoto = nessuno: basta quando pagina e API passano dallo
+    # stesso indirizzo, come con il proxy dello step 9.
+    cors_origini: tuple[str, ...] = ()
 
 
 def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
@@ -40,4 +44,7 @@ def carica_configurazione(env: Mapping[str, str]) -> Configurazione:
         agente_url=(env.get("AGENTE_URL", "").strip() or "http://localhost:8001").rstrip("/"),
         agente_timeout=timeout,
         log_level=livello,
+        cors_origini=tuple(
+            origine.strip().rstrip("/") for origine in env.get("CORS_ORIGINI", "").split(",") if origine.strip()
+        ),
     )

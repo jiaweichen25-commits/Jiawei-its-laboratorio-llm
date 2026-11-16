@@ -298,4 +298,9 @@ def test_servizio_reale_stessa_risposta_da_cli_e_da_api(servizio_vero):
 
     assert '[strumento] orologio(fuso="Asia/Tokyo")' in out.getvalue(), out.getvalue()
     assert diretta.status_code == 200, diretta.text
-    assert [(s["nome"], s["argomenti"]) for s in diretta.json()["strumenti_usati"]] == [("orologio", {"fuso": "Asia/Tokyo"})]
+    usati = diretta.json()["strumenti_usati"]
+    assert [(s["nome"], s["argomenti"]) for s in usati] == [("orologio", {"fuso": "Asia/Tokyo"})]
+    # Non basta che lo strumento sia stato chiamato: deve aver risposto con l'ora, non con un errore
+    # (per esempio VARIANTE_OROLOGIO=fastapi nel .env senza il servizio dell'orologio acceso).
+    assert ORA_TOKYO.fullmatch(usati[0]["risultato"]), usati[0]["risultato"]
+    assert "→ Errore" not in out.getvalue(), out.getvalue()
