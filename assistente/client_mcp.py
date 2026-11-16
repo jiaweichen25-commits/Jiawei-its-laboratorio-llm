@@ -31,6 +31,7 @@ from typing import Any
 
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
 
 log = logging.getLogger("assistente.mcp")
@@ -87,6 +88,7 @@ class ClienteMCP:
         self._terminata = threading.Event()     # chiudi() aspetta questo: sessione chiusa davvero
         self._task: asyncio.Task | None = None  # il task asyncio di _sessione, per poterlo annullare
         self._catalogo: list = []
+        self._prompt: list = []                  # lezione 6, step 5: risultato di prompts/list
 
     # ------------------------------------------------------------------ ciclo di vita
 
@@ -105,6 +107,7 @@ class ClienteMCP:
             self.chiudi()
             raise ErroreCollegamentoMCP(f"impossibile avviare il server MCP: {errore}") from errore
         log.info("mcp: catalogo ricevuto %s", [voce.name for voce in self._catalogo])
+        log.info("mcp: prompt disponibili %s", [p.name for p in self._prompt])
 
     async def _sessione(self) -> None:
         """Gira nel thread di servizio: apre la sessione, la tiene viva finché non arriva lo stop."""
@@ -114,6 +117,7 @@ class ClienteMCP:
             # e la chiude da sola all'uscita del blocco.
             async with Client(self._sorgente, timeout=self._timeout) as client:
                 self._catalogo = await client.list_tools()  # DISCOVERY: tools/list
+                self._prompt = await client.list_prompts()  # lezione 6: prompts/list
                 self._stop = asyncio.Event()
                 self._client = client
                 self._pronto.set()       # sblocca avvia()
@@ -203,6 +207,27 @@ class ClienteMCP:
         if risultato.is_error:
             return f"Errore: {testo}"  # errore DELLO STRUMENTO (es. fuso non valido)
         return testo
+
+
+    def elenco_prompt(self) -> list:
+        """Lezione 6, step 5: i prompt ottenuti con prompts/list all'avvio (nome, descrizione, argomenti)."""
+        return list(self._prompt)
+
+    def ottieni_prompt(self, nome: str, argomenti: dict[str, str]) -> list[BaseMessage]:
+        """Lezione 6, step 5: prompts/get. Restituisce i messaggi compilati dal server come messaggi LangChain.
+
+        È la nostra versione di load_mcp_prompt della slide 9: ruolo «user» → HumanMessage,
+        ruolo «assistant» → AIMessage. Poi i messaggi vanno al grafo come una domanda qualsiasi.
+        """
+        if self._client is None:
+            raise ErroreCollegamentoMCP("la sessione con il server non è attiva")
+        risultato = self._esegui(self._client.get_prompt(nome, argomenti))
+        messaggi = [
+            (AIMessage if m.role == "assistant" else HumanMessage)(getattr(m.content, "text", str(m.content)))
+            for m in risultato.messages
+        ]
+        log.info("mcp: prompts/get %s argomenti=%s messaggi=%s", nome, argomenti, [m.content for m in messaggi])
+        return messaggi
 
 
 # ---------------------------------------------------------------------- adattatore

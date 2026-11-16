@@ -78,7 +78,8 @@ def main() -> int:
             ),
             preferenze=preferenze,
         )
-        conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore)
+        # Lezione 6, step 5: il client MCP fornisce anche i prompt per /prompts e /prompt.
+        conversa(grafo, config_sessione(), descrivi_errore=descrivi_errore, prompt_mcp=cliente)
     finally:
         cliente.chiudi()  # anche in caso di errore o Ctrl+C: il server MCP non resta acceso
     return 0

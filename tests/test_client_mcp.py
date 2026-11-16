@@ -186,3 +186,30 @@ def test_il_server_stdio_legge_il_file_indicato_da_PREFERENZE_FILE(tmp_path, mon
 
     with ClienteMCP(trasporto_stdio()) as c:
         assert c.leggi_risorsa(URI_PREFERENZE) == '{"lingua": "inglese"}'
+
+
+# ---------------------------------------------------------------- lezione 6, step 5: prompt
+
+def test_elenco_prompt_scaricato_all_avvio(cliente):
+    assert {p.name for p in cliente.elenco_prompt()} == {"spiega", "riassumi_conversazione"}
+
+
+def test_ottieni_prompt_converte_in_messaggi_langchain(cliente):
+    messaggi = cliente.ottieni_prompt("spiega", {"argomento": "MCP"})
+
+    assert len(messaggi) == 1 and isinstance(messaggi[0], HumanMessage)
+    assert "MCP" in messaggi[0].content
+
+
+def test_ottieni_prompt_con_errore_del_server(cliente):
+    with pytest.raises(ErroreCollegamentoMCP):
+        cliente.ottieni_prompt("spiega", {})  # manca l'obbligatorio: il server lo rifiuta
+
+
+def test_ottieni_prompt_dopo_la_chiusura():
+    c = ClienteMCP(crea_server(lambda: ISTANTE))
+    c.avvia()
+    c.chiudi()
+
+    with pytest.raises(ErroreCollegamentoMCP, match="non è attiva"):
+        c.ottieni_prompt("spiega", {"argomento": "MCP"})

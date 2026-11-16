@@ -22,7 +22,7 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
 `strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
-`preferenze.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`preferenze.py`, `comandi.py`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -123,6 +123,33 @@ sostituiti`.
 
 Evidenze nei log all'avvio: `mcp: resources/read utente://preferenze → {...}` e
 `preferenze: lingua=... fuso=... stile=...`, separate dalle righe `strumenti:` dei tool.
+
+### Step 5 · Prompt: comandi riusabili nella CLI
+
+Il server MCP espone due prompt, cioè modelli di istruzioni con argomenti che è l'utente a richiamare:
+
+| Prompt | Argomenti | Cosa chiede al modello |
+|---|---|---|
+| `spiega` | `argomento` (obbligatorio), `livello` (facoltativo: base, intermedio, avanzato; predefinito base) | spiegare l'argomento al livello indicato |
+| `riassumi_conversazione` | `stile` (facoltativo: sintetico o dettagliato) | riassumere i turni della sessione corrente |
+
+MCP non prevede un comando standard: i comandi li definisce questa CLI.
+
+```text
+Tu> /prompts
+Tu> /prompt spiega argomento="Model Context Protocol" livello=base
+Tu> /prompt riassumi_conversazione stile=dettagliato
+```
+
+- I valori con spazi vanno tra virgolette.
+- Il programma controlla gli argomenti sull'elenco ricevuto con `prompts/list` prima di chiamare server e modello:
+  prompt sconosciuto, argomento obbligatorio mancante, argomento sconosciuto o virgolette non chiuse danno un messaggio
+  e nessuna chiamata. Il controllo serve davvero: FastMCP accetta in silenzio un argomento sconosciuto.
+- I messaggi ottenuti dal server (`prompts/get`) entrano in cronologia e vanno al grafo come una domanda qualsiasi:
+  passano da riassunto, router, strumenti e revisore.
+- Un comando che inizia con `/` e non esiste risponde «Comando sconosciuto» senza chiamare il modello.
+
+Evidenze nei log: `prompt: /prompt spiega argomenti={...}` e `mcp: prompts/get spiega argomenti=... messaggi=[...]`.
 
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 
@@ -230,6 +257,10 @@ Lezione 6: `test_controllo.py` (output strutturato, trascrizione, messaggi del r
 (percorsi del grafo con le risposte di router e revisore simulate, compreso un revisore che rifiuta sempre e si ferma
 al limite, e il riassunto con il punto di taglio). Prove reali in `test_reali.py`: router con domanda in ambito, fuori
 ambito e di seguito; revisore con una domanda in due parti; riassunto che ricorda il nome dato al primo turno.
+Step 4–5: `test_preferenze.py` (validazione e valori predefiniti), `test_comandi.py` (interpretazione e controllo di
+`/prompt`), resource e prompt in `test_server_mcp.py` e `test_client_mcp.py`, comandi in `test_terminale.py`. Prove
+reali: fuso `America/New_York` e lingua inglese da un file di preferenze temporaneo; `spiega` attraverso router e
+revisore; `riassumi_conversazione` dopo due turni.
 
 ## Diagnosi
 
@@ -251,6 +282,9 @@ ambito e di seguito; revisore con una domanda in due parti; riassunto che ricord
 - I log su stderr si mescolano al testo in streaming (vedi Diagnosi).
 - Lezione 6: router e revisore aggiungono una chiamata al modello ciascuno, quindi ogni domanda richiede più tempo
   (con gemma-4-e4b sulla macchina di prova da 10 a 35 secondi per chiamata).
+- Lezione 6: le risposte lunghe, come quella di `/prompt spiega`, possono richiedere minuti (260 s nella prova
+  reale). Il terminale funziona perché riceve la risposta in streaming; una chiamata senza streaming (`invoke`)
+  supera invece il timeout di 120 s del modello. Va tenuto presente per lo step 6 (agente come servizio HTTP).
 - Lezione 6: con un modello da 4B le risposte che dipendono dal riassunto non sono sempre affidabili; a volte il
   modello risponde di non conoscere un'informazione che ha nel messaggio di sistema. Il codice passa il riassunto
   correttamente (verificato catturando la richiesta inviata a LM Studio).

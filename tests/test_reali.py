@@ -206,3 +206,56 @@ def test_preferenze_reali_lingua(cfg, tmp_path, monkeypatch):
 
     risposta = risposta_finale(messaggi).lower()
     assert any(parola in risposta.split() for parola in ("i", "i'm", "you", "the", "am", "hello", "hi")), risposta
+
+
+# ---------------------------------------------------------------- lezione 6, step 5: prompt
+
+def test_prompt_reale_spiega_passa_da_router_e_revisore(cfg):
+    # Slide 10: il prompt richiamato dall'utente passa dal grafo come qualsiasi altra domanda.
+    # Si usa il terminale vero, con lo streaming: con invoke la spiegazione intera supera il
+    # timeout di 120 s del modello, mentre in streaming il limite vale tra un frammento e l'altro.
+    import io
+
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from assistente.grafo import config_sessione
+    from assistente.terminale import conversa
+
+    righe = iter(['/prompt spiega argomento="Model Context Protocol" livello=base'])
+
+    def leggi(_=""):
+        try:
+            return next(righe)
+        except StopIteration:
+            raise EOFError
+
+    with ClienteMCP(trasporto_stdio()) as cliente:
+        strumenti = strumenti_per_variante("mcp", crea_strumenti_mcp(cliente), cfg.orologio_api_url)
+        grafo = costruisci_grafo(
+            crea_modello(cfg), cfg.fuso_predefinito, strumenti=strumenti, checkpointer=InMemorySaver(),
+            opzioni=OpzioniGrafo(ambito=cfg.ambito, limite_revisioni=1),
+        )
+        config = config_sessione()
+        out = io.StringIO()
+        conversa(grafo, config, leggi, out, prompt_mcp=cliente)
+        stato = grafo.get_state(config).values
+
+    assert stato["categoria"] == "conversazione", out.getvalue()  # il router non l'ha rifiutato
+    assert stato["messages"][0].content.startswith("Spiegami «Model Context Protocol» a livello base")
+    risposta = risposta_finale(stato["messages"])
+    assert "protocol" in risposta.lower() or "MCP" in risposta, risposta
+
+
+def test_prompt_reale_riassumi_conversazione(cfg):
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    with ClienteMCP(trasporto_stdio()) as cliente:
+        strumenti = strumenti_per_variante("mcp", crea_strumenti_mcp(cliente), cfg.orologio_api_url)
+        grafo = costruisci_grafo(crea_modello(cfg), cfg.fuso_predefinito, strumenti=strumenti, checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "riassumi"}, "recursion_limit": LIMITE_PASSAGGI}
+        grafo.invoke({"messages": [HumanMessage("Che ore sono a Tokyo?")]}, config)
+        grafo.invoke({"messages": [HumanMessage("Converti 10 km in miglia.")]}, config)
+        stato = grafo.invoke({"messages": cliente.ottieni_prompt("riassumi_conversazione", {})}, config)
+
+    risposta = risposta_finale(stato["messages"]).lower()
+    assert "tokyo" in risposta and ("miglia" in risposta or "km" in risposta), risposta

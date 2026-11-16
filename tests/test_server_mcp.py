@@ -131,3 +131,28 @@ def test_file_delle_preferenze_mancante_e_errore_mcp(tmp_path):
 
     with pytest.raises(McpError):
         esegui_con(tmp_path / "manca.json", lambda c: c.read_resource(URI_PREFERENZE))
+
+
+# ---------------------------------------------------------------- lezione 6, step 5: prompt
+
+def test_due_prompt_con_i_loro_argomenti():
+    prompt = {p.name: p for p in esegui(lambda c: c.list_prompts())}
+
+    assert set(prompt) == {"spiega", "riassumi_conversazione"}
+    assert {(a.name, a.required) for a in prompt["spiega"].arguments} == {("argomento", True), ("livello", False)}
+    assert {(a.name, a.required) for a in prompt["riassumi_conversazione"].arguments} == {("stile", False)}
+    assert all(a.description for p in prompt.values() for a in p.arguments)
+
+
+def test_spiega_rende_un_messaggio_utente_con_argomento_e_livello():
+    risultato = esegui(lambda c: c.get_prompt("spiega", {"argomento": "MCP", "livello": "avanzato"}))
+
+    [messaggio] = risultato.messages
+    assert messaggio.role == "user"
+    assert "MCP" in messaggio.content.text and "avanzato" in messaggio.content.text
+
+
+def test_riassumi_conversazione_usa_lo_stile_predefinito():
+    risultato = esegui(lambda c: c.get_prompt("riassumi_conversazione", {}))
+
+    assert "sintetico" in risultato.messages[0].content.text

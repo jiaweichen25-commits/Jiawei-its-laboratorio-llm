@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+import pytest
 import openai
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -215,3 +216,93 @@ def test_riassunto_mostrato_e_cronologia_coerente_dopo_un_turno_fallito():
     stato = grafo.get_state(config).values
     assert [m.content for m in stato["messages"]] == ["d2", "r2", "d4", "r4"]  # del turno fallito non resta d3
     assert stato["riassunto"] == "riassunto"
+
+
+# ---------------------------------------------------------------- lezione 6, step 5: /prompts e /prompt
+
+from mcp.types import Prompt, PromptArgument  # noqa: E402
+
+from assistente.client_mcp import ErroreCollegamentoMCP  # noqa: E402
+
+
+class PromptFinti:
+    """Fa le veci del ClienteMCP: catalogo fisso e messaggi prestabiliti."""
+
+    def __init__(self, guasto=False):
+        self.richieste = []
+        self.guasto = guasto
+
+    def elenco_prompt(self):
+        return [Prompt(name="spiega", description="Spiega un argomento.", arguments=[
+            PromptArgument(name="argomento", description="concetto", required=True),
+            PromptArgument(name="livello", description="base, intermedio o avanzato", required=False),
+        ])]
+
+    def ottieni_prompt(self, nome, argomenti):
+        self.richieste.append((nome, argomenti))
+        if self.guasto:
+            raise ErroreCollegamentoMCP("la sessione con il server non è attiva")
+        return [HumanMessage(f"Spiegami «{argomenti['argomento']}» a livello {argomenti.get('livello', 'base')}.")]
+
+
+def test_comando_prompts_elenca_senza_chiamare_il_modello():
+    modello, grafo = grafo_con()
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("  /PROMPTS  "), out, prompt_mcp=PromptFinti())
+
+    assert "spiega" in out.getvalue() and "argomento (obbligatorio)" in out.getvalue()
+    assert modello.ricevuti == []
+
+
+def test_comando_prompt_valido_va_al_grafo():
+    modello, grafo = grafo_con(AIMessage("MCP è un protocollo."))
+    finti = PromptFinti()
+    config = config_sessione()
+    out = io.StringIO()
+
+    conversa(grafo, config, lettore('/prompt spiega argomento="Model Context Protocol" livello=base'), out,
+             prompt_mcp=finti)
+
+    assert finti.richieste == [("spiega", {"argomento": "Model Context Protocol", "livello": "base"})]
+    assert "MCP è un protocollo." in out.getvalue()
+    messaggi = grafo.get_state(config).values["messages"]
+    assert messaggi[0].content == "Spiegami «Model Context Protocol» a livello base."
+
+
+@pytest.mark.parametrize("riga", [
+    "/prompt spiega livello=base",                 # obbligatorio mancante
+    "/prompt spiega argomento=MCP colore=blu",     # argomento sconosciuto
+    "/prompt inventato",                           # prompt sconosciuto
+    '/prompt spiega argomento="MCP',               # virgolette non chiuse
+    "/boh",                                        # comando sconosciuto
+])
+def test_comando_non_valido_non_chiama_ne_server_ne_modello(riga):
+    modello, grafo = grafo_con()
+    finti = PromptFinti()
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore(riga), out, prompt_mcp=finti)
+
+    assert out.getvalue().strip()  # un messaggio per l'utente c'è sempre
+    assert finti.richieste == [] and modello.ricevuti == []
+
+
+def test_server_caduto_durante_prompt():
+    modello, grafo = grafo_con()
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("/prompt spiega argomento=MCP"), out, prompt_mcp=PromptFinti(guasto=True))
+
+    assert "Errore di collegamento MCP" in out.getvalue()
+    assert modello.ricevuti == []
+
+
+def test_senza_prompt_mcp_i_comandi_lo_dicono():
+    modello, grafo = grafo_con()
+    out = io.StringIO()
+
+    conversa(grafo, config_sessione(), lettore("/prompts"), out)
+
+    assert "non disponibili" in out.getvalue()
+    assert modello.ricevuti == []

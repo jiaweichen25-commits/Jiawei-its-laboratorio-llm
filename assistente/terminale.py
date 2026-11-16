@@ -6,6 +6,8 @@ import sys
 from langchain_core.messages import HumanMessage, RemoveMessage
 from langgraph.errors import GraphRecursionError
 
+from assistente.comandi import ErroreComando, formatta_elenco, interpreta_prompt, valida_argomenti
+
 log = logging.getLogger("assistente.terminale")
 
 
@@ -51,11 +53,11 @@ def formatta_traccia(nome: str, args: dict, risultato: str) -> str:
     return f"[strumento] {nome}({argomenti}) → {risultato}"
 
 
-def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
+def _turno(grafo, config, messaggi: list, uscita: _Uscita) -> None:
     chiamate = {}  # tool_call_id → chiamata completa, dal messaggio del nodo modello
     # `revisioni: 0` riporta a zero il contatore del revisore a ogni nuova domanda (lezione 6).
     for modo, dati in grafo.stream(
-        {"messages": [HumanMessage(domanda)], "revisioni": 0}, config, stream_mode=["messages", "updates"]
+        {"messages": messaggi, "revisioni": 0}, config, stream_mode=["messages", "updates"]
     ):
         if modo == "messages":
             frammento, meta = dati
@@ -83,7 +85,36 @@ def _turno(grafo, config, domanda: str, uscita: _Uscita) -> None:
     uscita.chiudi_riga()
 
 
-def conversa(grafo, config, leggi=input, out=sys.stdout, descrivi_errore=lambda exc: None) -> None:
+def comando(riga: str, prompt_mcp) -> tuple[str | None, list]:
+    """Lezione 6, step 5: gestisce una riga che inizia con «/».
+
+    Restituisce (testo da mostrare, messaggi da mandare al grafo). Se c'è un testo da mostrare
+    il turno non parte: né il server né il modello vengono chiamati.
+    """
+    nome_comando = riga.split(maxsplit=1)[0].lower()
+    if nome_comando not in ("/prompts", "/prompt"):
+        return f"Comando sconosciuto: {nome_comando}. Comandi disponibili: /prompts, /prompt, esci.", []
+    if prompt_mcp is None:
+        return "Prompt MCP non disponibili in questa sessione.", []
+    if nome_comando == "/prompts":
+        return formatta_elenco(prompt_mcp.elenco_prompt()), []
+    try:
+        nome, argomenti = interpreta_prompt(riga)
+        catalogo = {p.name: p for p in prompt_mcp.elenco_prompt()}
+        if nome not in catalogo:
+            raise ErroreComando(f"Prompt sconosciuto: «{nome}». Elenco con /prompts.")
+        valida_argomenti(catalogo[nome], argomenti)
+    except ErroreComando as exc:
+        return str(exc), []
+    try:
+        messaggi = prompt_mcp.ottieni_prompt(nome, argomenti)
+    except Exception as exc:  # ErroreCollegamentoMCP: server caduto o prompt rifiutato
+        return f"Errore di collegamento MCP: {exc}", []
+    log.info("prompt: /prompt %s argomenti=%s → %d messaggi al grafo", nome, argomenti, len(messaggi))
+    return None, messaggi
+
+
+def conversa(grafo, config, leggi=input, out=sys.stdout, descrivi_errore=lambda exc: None, prompt_mcp=None) -> None:
     uscita = _Uscita(out)
     try:
         while True:
@@ -96,10 +127,17 @@ def conversa(grafo, config, leggi=input, out=sys.stdout, descrivi_errore=lambda 
                 return
             if not domanda:
                 continue
+            if domanda.startswith("/"):
+                avviso, messaggi = comando(domanda, prompt_mcp)
+                if avviso is not None:
+                    uscita.riga(avviso)
+                    continue
+            else:
+                messaggi = [HumanMessage(domanda)]
 
             id_prima = _id_messaggi(grafo, config)
             try:
-                _turno(grafo, config, domanda, uscita)
+                _turno(grafo, config, messaggi, uscita)
             except GraphRecursionError:
                 messaggio = "Troppi passaggi tra modello e strumenti: turno interrotto."
             except Exception as exc:

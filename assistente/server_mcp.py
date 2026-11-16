@@ -4,8 +4,10 @@ Ruolo MCP: questo è il SERVER. Espone tre tool (le «capacità»):
   - orologio  (slide 17: la stessa capacità delle altre due varianti)
   - calcola   (slide 25: calcolatrice sicura)
   - converti  (slide 25: convertitore di unità)
-e, dalla lezione 6, una RESOURCE:
-  - utente://preferenze  (step 4: il contenuto di preferenze.json, letto dall'host all'avvio)
+e, dalla lezione 6, una RESOURCE e due PROMPT:
+  - utente://preferenze     (step 4: il contenuto di preferenze.json, letto dall'host all'avvio)
+  - spiega                  (step 5: richiamato dall'utente con /prompt)
+  - riassumi_conversazione  (step 5: richiamato dall'utente con /prompt)
 
 Il CONTRATTO di ogni tool (nome, descrizione, schema JSON degli argomenti) viene generato da
 FastMCP leggendo la firma e la docstring delle funzioni, e il client lo ottiene con tools/list
@@ -59,6 +61,34 @@ def crea_server(adesso: Callable[[], datetime] = ora_utc, percorso_preferenze: P
 
     # @mcp.tool registra la funzione nel catalogo MCP. La docstring diventa la «description» che il
     # modello legge per decidere se usare il tool; i tipi diventano lo «inputSchema».
+
+    # Lezione 6, step 5 — PROMPT (slide 9): modelli di istruzioni con argomenti, salvati sul server e
+    # condivisi da tutti i client. Li sceglie l'UTENTE; la docstring diventa la descrizione e la
+    # sezione «Args» le descrizioni degli argomenti mostrate da /prompts.
+    @mcp.prompt
+    def spiega(argomento: str, livello: str = "base") -> str:
+        """Spiega un argomento al livello richiesto.
+
+        Args:
+            argomento: concetto da spiegare
+            livello: base, intermedio o avanzato
+        """
+        return (
+            f"Spiegami «{argomento}» a livello {livello}. Adatta il linguaggio al livello: a livello base "
+            "usa parole semplici e un esempio concreto, a livello avanzato entra nei dettagli tecnici."
+        )
+
+    @mcp.prompt
+    def riassumi_conversazione(stile: str = "sintetico") -> str:
+        """Riassume i turni della conversazione corrente.
+
+        Args:
+            stile: sintetico o dettagliato
+        """
+        return (
+            f"Riassumi in stile {stile} la nostra conversazione di questa sessione: quali domande ho fatto "
+            "e quali risposte mi hai dato. Non aggiungere informazioni nuove."
+        )
 
     @mcp.tool
     def orologio(
