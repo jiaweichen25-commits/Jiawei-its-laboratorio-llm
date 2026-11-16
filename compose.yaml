@@ -1,34 +1,79 @@
-# Lezione 6. Servizi presenti finora:
-#   agente    (step 6) il servizio HTTP dell'agente, porta 8001
-#   postgres  (step 7) il database delle chat, usato dal back-end
-# Il back-end in questo step gira in locale con uvicorn; lo step 9 porterà tutto a quattro container.
+# Lezione 6, step 9: l'applicazione completa, un container per componente (slide 12 e 16).
+#
+#   docker compose up -d --build      avvia tutto; poi http://localhost:8085 nel browser
+#   docker compose ps                 i quattro servizi
+#   docker compose logs -f agente     i log del grafo (router, strumenti, revisore)
+#   docker compose down               ferma tutto; le chat restano nel volume
+#
+#   browser ──▶ frontend (nginx) ──/api──▶ backend ──▶ agente ──▶ LM Studio sul computer
+#                                             │
+#                                             ▼
+#                                          postgres
+#
+# LM Studio NON è in un container: resta sul computer, con il modello caricato e il server avviato.
+# Solo il front-end è raggiungibile dal browser; back-end e agente vivono nella rete interna di Compose,
+# dove ogni servizio è raggiungibile dagli altri con il proprio nome (http://backend:8002, http://agente:8001).
 services:
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      # Porta sul computer → porta 80 di nginx. Si cambia con PORTA_WEB nel file .env.
+      - "${PORTA_WEB:-8085}:80"
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # Nessuna porta pubblicata: il browser lo raggiunge solo attraverso il proxy del front-end (/api).
+    environment:
+      # «postgres» e «agente» sono i nomi dei servizi qui sotto, non «localhost»: nel container
+      # localhost è il container stesso. Le credenziali arrivano dal file .env (escluso da Git).
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AGENTE_URL: http://agente:8001
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Pagina e API passano dallo stesso indirizzo (il proxy): CORS non serve.
+      CORS_ORIGINI: ""
+    depends_on:
+      postgres:
+        # Il back-end crea le tabelle all'avvio: parte solo quando PostgreSQL accetta connessioni.
+        condition: service_healthy
+      agente:
+        condition: service_started
+
   agente:
-    build: .
+    build:
+      context: .
+    # Nessuna porta pubblicata (slide 16: l'agente non è esposto). Lo chiama solo il back-end.
     env_file: .env
     environment:
+      # host.docker.internal = il computer su cui gira Docker, dove è acceso LM Studio.
       LM_BASE_URL: http://host.docker.internal:1234/v1
+      # Nel container l'orologio passa sempre dal server MCP, avviato come sottoprocesso stdio nello
+      # stesso container; la variante fastapi richiederebbe un quinto servizio.
+      VARIANTE_OROLOGIO: mcp
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "8001:8001"
 
   postgres:
     image: postgres:17
-    # Le credenziali arrivano dal file .env (escluso da Git): qui ci sono solo i nomi delle variabili.
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      # 5434 sul computer → 5432 nel container: sulla macchina di sviluppo 5432 e 5433 sono già occupate
-      # (PostgreSQL installato su Windows e database di un altro progetto).
-      - "5434:5432"
+      # Solo dal computer locale (127.0.0.1), per avviare il back-end fuori da Docker durante lo sviluppo.
+      # 5434 perché sulla macchina di sviluppo 5432 e 5433 sono già occupate.
+      - "127.0.0.1:5434:5432"
     volumes:
       # Volume con nome: i dati sopravvivono a `docker compose down` e al riavvio del container.
       - dati_postgres:/var/lib/postgresql/data
     healthcheck:
-      # «Sano» solo quando PostgreSQL accetta connessioni: servirà allo step 9 per far partire dopo il back-end.
+      # «Sano» solo quando PostgreSQL accetta connessioni: il back-end aspetta questo segnale.
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s

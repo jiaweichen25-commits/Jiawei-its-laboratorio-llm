@@ -2,7 +2,7 @@
 
 Progetto del corso «Deep Learning e LLM: costruire chatbot e agenti». La cartella del progetto è `its-laboratorio-llm/`.
 
-Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio, opzioni dei nodi della lezione 6), `grafo.py` (stato, nodi, instradamento: riassunto → router → modello ⇄ strumenti → revisore, più rifiuto; i nodi della lezione 6 si accendono con `OpzioniGrafo`), `controllo.py` (prompt e output strutturato di router, revisore e riassunto), `preferenze.py` (validazione della resource `utente://preferenze`, letta dall'host all'avvio da `preferenze.json`), `comandi.py` (comandi `/prompts` e `/prompt` del terminale e controllo degli argomenti dei prompt MCP), `agente.py` (un turno senza stato: cronologia e riassunto dal chiamante, `EsitoTurno` in uscita; costruzione dell'agente), `servizio_agente.py` (servizio FastAPI dell'agente: `/conversazione`, `/prompts`, `/stato`), `cliente_agente.py` (client HTTP usato dalla CLI), `modello.py` (collegamento a LM Studio), `terminale.py` (CLI, client del servizio), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `backend/` (lezione 6, step 7: back-end delle chat, componente separato che non importa `assistente` — `app.py` API FastAPI, `archivio.py` tabelle SQLAlchemy su PostgreSQL, `agente_http.py` client del servizio dell'agente, `config.py`, `requirements.txt`); `frontend/` (lezione 6, step 8: pagina statica senza librerie che parla solo con il back-end — `config.js` unico posto con l'indirizzo del back-end, `api.js` chiamate e lettura dello streaming SSE, `app.js` logica, `test/` test con `node --test`); `tests/`; `Dockerfile` e `compose.yaml` (servizi `agente` e `postgres`); dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
+Struttura: `assistente/` con `config.py` (variabili d'ambiente, verifica del modello, variante dell'orologio, opzioni dei nodi della lezione 6), `grafo.py` (stato, nodi, instradamento: riassunto → router → modello ⇄ strumenti → revisore, più rifiuto; i nodi della lezione 6 si accendono con `OpzioniGrafo`), `controllo.py` (prompt e output strutturato di router, revisore e riassunto), `preferenze.py` (validazione della resource `utente://preferenze`, letta dall'host all'avvio da `preferenze.json`), `comandi.py` (comandi `/prompts` e `/prompt` del terminale e controllo degli argomenti dei prompt MCP), `agente.py` (un turno senza stato: cronologia e riassunto dal chiamante, `EsitoTurno` in uscita; costruzione dell'agente), `servizio_agente.py` (servizio FastAPI dell'agente: `/conversazione`, `/prompts`, `/stato`), `cliente_agente.py` (client HTTP usato dalla CLI), `modello.py` (collegamento a LM Studio), `terminale.py` (CLI, client del servizio), `logica.py` (logica pura di orologio, calcolatrice e convertitore), `strumenti.py` (variante locale), `servizio_api.py` + `wrapper_http.py` (variante FastAPI), `server_mcp.py` + `client_mcp.py` (variante FastMCP, server stdio e adattatore), `varianti.py` (scelta della variante); `backend/` (lezione 6, step 7: back-end delle chat, componente separato che non importa `assistente` — `app.py` API FastAPI, `archivio.py` tabelle SQLAlchemy su PostgreSQL, `agente_http.py` client del servizio dell'agente, `config.py`, `requirements.txt`); `frontend/` (lezione 6, step 8: pagina statica senza librerie che parla solo con il back-end — `config.js` unico posto con l'indirizzo del back-end, `api.js` chiamate e lettura dello streaming SSE, `app.js` logica, `test/` test con `node --test`); `tests/`; Docker (lezione 6, step 9): `compose.yaml` con quattro servizi — `frontend` (`frontend/Dockerfile`, nginx che serve la pagina e fa da proxy di `/api/` con `frontend/docker/nginx.conf`), `backend` (`backend/Dockerfile`), `agente` (`Dockerfile` nella radice) e `postgres` (immagine ufficiale, volume `dati_postgres`); dipendenze in `requirements.txt` e `requirements-dev.txt`; specifiche e piani in `docs/superpowers/`.
 
 Comandi (PowerShell, dalla cartella del progetto):
 
@@ -12,6 +12,7 @@ Comandi (PowerShell, dalla cartella del progetto):
 - servizio dell'agente (lezione 6, step 6): `.\.venv\Scripts\python.exe -m uvicorn assistente.servizio_agente:app --port 8001` oppure `docker compose up -d --build`
 - CLI, client del servizio: `.\.venv\Scripts\python.exe -m assistente`
 - back-end (lezione 6, step 7): `docker compose up -d postgres`, poi `.\.venv\Scripts\python.exe -m uvicorn backend.app:app --port 8002`
+- applicazione completa in Docker (lezione 6, step 9): `docker compose up -d --build`, poi `http://localhost:8085`; `docker compose down` per fermarla
 - front-end (lezione 6, step 8): `.\.venv\Scripts\python.exe -m http.server 8003 --directory frontend`, poi `http://localhost:8003`; test JavaScript: `node --test` dalla cartella `frontend/`
 
 ## Obiettivo
@@ -27,6 +28,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - legge le preferenze dell'utente da una resource MCP e offre prompt MCP richiamabili dall'utente (lezione 6, step 4–5);
 - espone l'agente come servizio HTTP senza stato e salva le chat in PostgreSQL tramite un back-end (lezione 6, step 6–7);
 - offre un'interfaccia di chat nel browser con la risposta in streaming lungo tutta la catena agente → back-end → front-end (lezione 6, step 8);
+- si avvia con un solo comando in quattro container: front-end, back-end, agente e PostgreSQL (lezione 6, step 9);
 - si avvia anche con Docker Compose.
 
 ## Confini
@@ -42,7 +44,7 @@ Un'applicazione da terminale in Python che conversa con un modello locale e:
 - LM Studio sull'host, raggiunto tramite la sua API compatibile con OpenAI.
 - Indirizzo del server e identificativo del modello solo da variabili d'ambiente. L'identificativo è quello restituito dal server (`GET /v1/models`), mai inventato.
 - Un file di configurazione di esempio senza credenziali; il file reale resta fuori da Git.
-- Docker Compose per l'applicazione; LM Studio non va containerizzato.
+- Docker Compose per l'applicazione, un container per componente; LM Studio non va containerizzato. Solo il front-end pubblica una porta; back-end e agente restano nella rete interna.
 - Dipendenze motivate, concordate e con versioni fissate.
 - Comandi documentati anche per PowerShell (Windows).
 

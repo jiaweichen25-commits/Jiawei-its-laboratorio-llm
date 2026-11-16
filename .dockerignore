@@ -1,9 +1,12 @@
 .env
 .venv/
 .git/
-__pycache__/
+**/__pycache__/
 .pytest_cache/
+.superpowers/
+.vscode/
 tests/
+frontend/test/
 docs/
 Lezione3/
-server_mcp.log
+*.log

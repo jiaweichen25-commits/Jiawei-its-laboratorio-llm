@@ -1,8 +1,9 @@
 # Assistente del laboratorio
 
-Applicazione da terminale in Python che conversa con un modello locale servito da LM Studio. Il flusso è un grafo
-LangGraph; il modello può chiamare degli strumenti che il programma esegue davvero. La cronologia dura quanto la
-sessione (nessuna persistenza).
+Agente in Python che conversa con un modello locale servito da LM Studio. Il flusso è un grafo LangGraph; il
+modello può chiamare degli strumenti che il programma esegue davvero. Dalla lezione 6 è un'applicazione web
+completa: interfaccia di chat nel browser, back-end che salva le conversazioni in PostgreSQL, agente come servizio
+HTTP, il tutto avviabile con `docker compose up`. Resta disponibile anche la CLI da terminale.
 
 Strumenti (lezione 5):
 
@@ -22,7 +23,7 @@ Le tre varianti dell'orologio (slide 17), una sola attiva per volta:
 
 Struttura: `assistente/` (`config.py`, `grafo.py`, `controllo.py`, `modello.py`, `terminale.py`, `logica.py`,
 `strumenti.py`, `servizio_api.py`, `wrapper_http.py`, `server_mcp.py`, `client_mcp.py`, `varianti.py`,
-`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `backend/` (`app.py`, `archivio.py`, `agente_http.py`, `config.py`, `requirements.txt`), `frontend/` (`index.html`, `stile.css`, `config.js`, `api.js`, `app.js`, `test/`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
+`preferenze.py`, `comandi.py`, `agente.py`, `servizio_agente.py`, `cliente_agente.py`), `backend/` (`app.py`, `archivio.py`, `agente_http.py`, `config.py`, `requirements.txt`), `frontend/` (`index.html`, `stile.css`, `config.js`, `api.js`, `app.js`, `test/`, `Dockerfile`, `docker/`), `preferenze.json`, `tests/`, `Dockerfile`, `compose.yaml`, `docs/superpowers/` (specifiche e piani).
 
 ## Lezione 6 — evolvere il grafo
 
@@ -174,7 +175,8 @@ Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-l
    `AMBITO_AGENTE` (di che cosa si occupa l'agente), `LIMITE_REVISIONI` (predefinito 2; 0 spegne il revisore),
    `SOGLIA_RIASSUNTO` (predefinito 12 messaggi; 0 spegne il riassunto), `MESSAGGI_DA_CONSERVARE` (predefinito 6),
    `PREFERENZE_FILE`, `AGENTE_URL` e `AGENTE_TIMEOUT` (CLI e back-end). Per il back-end (step 7): `POSTGRES_USER`,
-   `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`, con una password a scelta, e `CORS_ORIGINI` (step 8).
+   `POSTGRES_PASSWORD`, `POSTGRES_DB` e `DATABASE_URL`, con una password a scelta, `CORS_ORIGINI` (step 8) e
+   `PORTA_WEB` (step 9, facoltativa: porta dell'applicazione in Docker, predefinita 8085).
 
 3. In LM Studio carica un modello e avvia il server locale. Leggi gli ID disponibili e copia quello scelto in
    `LM_MODEL` nel file `.env` (l'ID è quello restituito dal server, non va inventato):
@@ -371,21 +373,62 @@ Prova diretta: `Invoke-RestMethod "http://localhost:8000/orologio?fuso=Asia/Toky
 
 ## Avvio con Docker Compose
 
-`compose.yaml` contiene due servizi: `agente` (step 6) e `postgres` (step 7); il back-end gira ancora in locale.
-Il container `agente` esegue il **servizio dell'agente** sulla porta 8001; la CLI gira sul computer host. LM Studio
-resta sull'host; nel container l'indirizzo è `http://host.docker.internal:1234/v1` (impostato in `compose.yaml`). Serve
-il file `.env` della sezione Preparazione. Il server MCP parte come sottoprocesso dentro lo stesso container.
+### Step 9 · L'applicazione completa, un container per componente
+
+Con LM Studio acceso (modello caricato, server locale avviato) e il file `.env` della sezione Preparazione, un solo
+comando avvia tutto:
 
 ```powershell
-docker compose up -d --build agente
-Invoke-RestMethod http://localhost:8001/stato
-.\.venv\Scripts\python.exe -m assistente
-docker compose logs -f agente     # i log del grafo, in un altro terminale
-docker compose down
+docker compose up -d --build
 ```
 
-Lo step 9 sostituirà questa configurazione con quattro container (front-end, back-end, agente, PostgreSQL), con
-l'agente non più esposto.
+poi `http://localhost:8085` nel browser.
+
+```
+        computer                         rete interna di Docker Compose
+  ┌──────────────────┐      ┌───────────┐      ┌──────────┐      ┌─────────┐
+  │ browser          │─────▶│ frontend  │─────▶│ backend  │─────▶│ agente  │──▶ LM Studio sul computer
+  │ localhost:8085   │      │ nginx     │ /api │ FastAPI  │      │ + MCP   │    (host.docker.internal)
+  └──────────────────┘      └───────────┘      └────┬─────┘      └─────────┘
+                                                    ▼
+                                               ┌──────────┐
+                                               │ postgres │── volume dati_postgres
+                                               └──────────┘
+```
+
+| Servizio | Immagine | Porta sul computer | Note |
+|---|---|---|---|
+| `frontend` | `frontend/Dockerfile` (nginx) | 8085 (`PORTA_WEB`) | serve la pagina e fa da proxy: `/api/...` va al back-end |
+| `backend` | `backend/Dockerfile` | nessuna | parte quando PostgreSQL è pronto (controllo di salute) |
+| `agente` | `Dockerfile` | nessuna | non è esposto: lo chiama solo il back-end; il server MCP parte nel suo container |
+| `postgres` | `postgres:17` (ufficiale) | 127.0.0.1:5434 | dati nel volume `dati_postgres` |
+
+- **LM Studio non è in un container:** resta sul computer e l'agente lo raggiunge con `host.docker.internal`.
+  Con LM Studio spento i container partono, ma la pagina segnala «modello: LM Studio non raggiungibile».
+- **Proxy:** il browser parla solo con nginx. Pagina e API hanno lo stesso indirizzo, quindi CORS non serve e
+  back-end e agente non pubblicano porte. Nel container `config.js` vale `backendUrl: "/api"`
+  (`frontend/docker/config.js`).
+- **Streaming attraverso il proxy:** `frontend/docker/nginx.conf` disattiva l'accumulo delle risposte
+  (`proxy_buffering off`) e porta l'attesa a 900 s, altrimenti nginx chiuderebbe il collegamento mentre router o
+  revisore stanno lavorando.
+- **Credenziali:** `compose.yaml` contiene solo i nomi delle variabili (`${POSTGRES_PASSWORD}`); i valori stanno nel
+  `.env`, escluso da Git. La password non deve contenere `@`, `:` o `/`.
+- Nel container l'agente usa sempre la variante `mcp` dell'orologio, qualunque sia `VARIANTE_OROLOGIO` nel `.env`.
+- PostgreSQL è raggiungibile dal solo computer locale sulla porta 5434: serve per avviare il back-end fuori da
+  Docker durante lo sviluppo (sezioni precedenti).
+
+Comandi utili:
+
+```powershell
+docker compose ps                 # i quattro servizi e il loro stato
+docker compose logs -f agente     # i log del grafo: router, strumenti, revisore
+docker compose logs backend       # salvataggi e errori del back-end
+docker compose down               # ferma tutto; le chat restano nel volume
+docker compose down -v            # ferma tutto e CANCELLA le chat (elimina il volume)
+```
+
+La CLI (`python -m assistente`) non fa parte dei container: per usarla si avvia il servizio dell'agente in locale
+come indicato in «Avvio locale».
 
 ## Test
 
@@ -425,6 +468,10 @@ Step 8: streaming in `test_agente.py`, `test_servizio_agente.py` e `test_backend
 flusso aperto, salvataggio solo alla fine, CORS); `test_frontend.py` (i percorsi usati da `api.js` esistono
 nell'OpenAPI del back-end, l'indirizzo sta solo in `config.js`, nessun inserimento di HTML) che esegue anche i test
 JavaScript: dalla cartella `frontend/`, `node --test` (lettura degli eventi spezzati tra due pacchetti, chiamate, errori).
+Step 9: `test_compose.py` (struttura di `compose.yaml` senza avviare Docker: quattro servizi, agente e back-end non
+esposti, back-end dopo il database, nessuna credenziale nel file, proxy adatto allo streaming) e `test_docker.py`
+(marker `docker`: i quattro container veri, chat in streaming attraverso il proxy, traccia dello strumento nei log
+dell'agente, chat ancora presente dopo `down` e `up`).
 Le prove reali controllano che lo strumento abbia risposto, non solo che sia stato chiamato.
 
 ## Diagnosi

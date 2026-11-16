@@ -32,6 +32,7 @@ const stato = {
   attiva: null,        // id della chat mostrata; null = nessuna (verrà creata al primo invio)
   messaggi: [],        // messaggi salvati della chat attiva
   caricamento: false,  // si sta leggendo la chat attiva dal back-end
+  creazione: false,    // si sta creando una chat: finché non esiste, non si può inviare
   invio: null,         // turno in corso: { chatId, domanda, bozza, strumenti, note, inizio }
   conferma: null,      // id della chat per cui si sta chiedendo «Elimina?»
 };
@@ -173,10 +174,13 @@ function aggiornaBozza() {
 }
 
 function aggiornaModulo() {
-  const occupato = stato.invio !== null;
+  // Durante la creazione di una chat la casella resta ferma: una domanda inviata in quell'istante
+  // finirebbe nella chat aperta prima, non in quella nuova.
+  const occupato = stato.invio !== null || stato.creazione;
   el.testo.disabled = occupato;
   el.invia.disabled = occupato;
-  el.invia.textContent = occupato ? "In attesa…" : "Invia";
+  el.nuovaChat.disabled = stato.creazione;
+  el.invia.textContent = stato.invio !== null ? "In attesa…" : "Invia";
 }
 
 function disegnaTutto() {
@@ -237,6 +241,8 @@ async function nuovaChat() {
   // Se la chat aperta è già vuota non ne serve un'altra.
   const attiva = stato.chat.find((chat) => chat.id === stato.attiva);
   if (!attiva || attiva.numero_messaggi > 0) {
+    stato.creazione = true;
+    aggiornaModulo();
     try {
       const chat = await api.creaChat();
       aperture++;
@@ -247,6 +253,7 @@ async function nuovaChat() {
     } catch (errore) {
       mostraErrore(errore.message);
     }
+    stato.creazione = false;
   }
   disegnaTutto();
   el.testo.focus();
@@ -340,7 +347,7 @@ async function invia(testo) {
 el.modulo.addEventListener("submit", (evento) => {
   evento.preventDefault();
   const testo = el.testo.value.trim();
-  if (testo !== "" && stato.invio === null) invia(testo);
+  if (testo !== "" && stato.invio === null && !stato.creazione) invia(testo);
 });
 
 el.testo.addEventListener("keydown", (evento) => {
