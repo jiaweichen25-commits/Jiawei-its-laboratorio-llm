@@ -15,7 +15,8 @@ SERVIZI = COMPOSE["services"]
 
 
 def test_quattro_servizi_tre_con_il_proprio_dockerfile():
-    assert set(SERVIZI) == {"frontend", "backend", "agente", "postgres"}
+    # Lezione 7: in più c'è Qdrant, il database vettoriale della pipeline RAG.
+    assert set(SERVIZI) == {"frontend", "backend", "agente", "postgres", "qdrant"}
 
     dockerfile = {nome: s["build"].get("dockerfile", "Dockerfile") for nome, s in SERVIZI.items() if "build" in s}
 
@@ -80,6 +81,15 @@ def test_il_front_end_nel_container_usa_il_proxy():
 
     assert 'backendUrl: "/api"' in config
     assert "docker/config.js" in dockerfile and "docker/nginx.conf" in dockerfile
+
+
+def test_qdrant_versione_fissa_volume_e_solo_dal_computer():
+    # Lezione 7, slide 16 e 19: servizio di Docker Compose, porta 6333, volume persistente.
+    qdrant = SERVIZI["qdrant"]
+
+    assert qdrant["image"] == "qdrant/qdrant:v1.20.2"
+    assert qdrant["ports"] == ["127.0.0.1:6333:6333"]
+    assert "dati_qdrant:/qdrant/storage" in qdrant["volumes"] and "dati_qdrant" in COMPOSE["volumes"]
 
 
 def test_il_back_end_non_porta_con_se_l_agente():

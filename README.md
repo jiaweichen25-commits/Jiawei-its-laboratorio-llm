@@ -154,6 +154,68 @@ Evidenze nei log: `prompt: /prompt spiega argomenti={...}` e `mcp: prompts/get s
 
 Tutti i comandi sono per PowerShell (Windows), dalla cartella `its-laboratorio-llm/`.
 
+## Lezione 7 — RAG: ingestion e ricerca semantica
+
+Il modello non conosce i documenti privati e, se l'informazione manca, può inventarla. Il RAG recupera pochi
+passaggi pertinenti da un corpus e li mette nel contesto. In questa lezione si costruisce e si **misura** solo il
+recupero; il modello generativo torna nella lezione 8, quando la ricerca diventerà uno strumento dell'agente.
+Il codice è nel pacchetto `rag/`, separato da `assistente/`.
+
+```
+FASE 1 · INGESTION (python -m rag.ingestion, quando il corpus cambia)
+dati/artusi.txt → pulizia → 790 ricette → chunk → embedding (LM Studio) → Qdrant, collezione «ricette»
+
+FASE 2 · RICERCA (python -m rag.ricerca, a ogni domanda)
+domanda → embedding (stesso modello) → i k chunk più vicini in Qdrant, con filtro per capitolo → testo e fonte
+```
+
+### Preparazione
+
+1. **Corpus:** Pellegrino Artusi, *La scienza in cucina e l'arte di mangiar bene* (1891), Project Gutenberg n. 59047,
+   pubblico dominio. Scaricare il file di testo da `https://www.gutenberg.org/ebooks/59047.txt.utf-8` e salvarlo in
+   `dati/artusi.txt`. La cartella `dati/` è esclusa da Git.
+2. **Modello di embedding** in LM Studio: caricare `text-embedding-nomic-embed-text-v1.5` (768 dimensioni) accanto
+   al modello generativo e copiarne l'ID da `/v1/models` in `EMBEDDING_MODEL` nel `.env`.
+3. **Qdrant** (database vettoriale, in Docker Compose):
+
+   ```powershell
+   docker compose up -d qdrant
+   ```
+
+   Dashboard web su `http://localhost:6333/dashboard`. I dati stanno nel volume `dati_qdrant`.
+
+### Comandi
+
+```powershell
+.\.venv\Scripts\python.exe -m rag.ingestion                                          # costruisce o aggiorna l'indice
+.\.venv\Scripts\python.exe -m rag.ricerca "Come si frigge il pollo?" --capitolo Fritti --k 3
+.\.venv\Scripts\python.exe -m rag.valutazione --k 5                                  # tabella sulle domande con fonte attesa
+```
+
+### Le scelte della pipeline (specifica: `docs/superpowers/specs/2026-11-17-lezione7-ingestion-ricerca-design.md`)
+
+| Scelta | Decisione | Perché |
+|---|---|---|
+| Documento | una ricetta (790); prefazione, introduzioni, appendice, menu e indice esclusi | ogni risultato ha sempre numero, titolo e capitolo; menu e indice contengono i titoli senza le ricette e «somigliano» troppo alle domande |
+| Chunking | una ricetta per chunk; quelle oltre 1200 caratteri divise a paragrafi, overlap 200 | un chunk non mescola mai due ricette e le dosi restano col procedimento; 1200/200 sono i valori della valutazione in aula, quindi confrontabili |
+| Payload | `documento_id`, `numero`, `titolo`, `capitolo`, `posizione`, `chunk_totali`, `testo`, `fonte` | citare, filtrare, ritrovare i chunk adiacenti |
+| ID | UUID v5 di `ricetta-089:0` | stesso chunk → stesso ID: rieseguendo l'ingestion si sostituisce, non si duplica |
+| Rieseguire | upsert + rimozione dei punti orfani; la collezione non si ricrea mai | serve per l'esercizio 2, che modifica chunk e campi sul posto |
+
+Altre regole:
+
+- La collezione registra **modello, dimensione e prefissi**: se la configurazione cambia, ingestion e ricerca si
+  fermano e chiedono un'altra collezione (cambiare modello richiede di reindicizzare tutto).
+- **Prefissi del modello:** `nomic-embed-text` riceve `search_document: ` davanti ai testi e `search_query: ` davanti
+  alle domande, come chiede la sua documentazione (`EMBEDDING_PREFISSI=no` per spegnerli).
+- La ricerca ha `k` da 1 a 20 (limite imposto dal codice) e il filtro per capitolo si applica **durante** la ricerca;
+  un capitolo inesistente viene rifiutato con l'elenco di quelli validi.
+- Consegna: conteggi delle ingestion e valutazioni in `docs/retrieval.md`; domande in `rag/domande.json`.
+
+Variabili nel `.env`: `EMBEDDING_MODEL` (obbligatoria), `EMBEDDING_PREFISSI` (`si`), `QDRANT_URL`
+(`http://localhost:6333`), `QDRANT_COLLEZIONE` (`ricette`), `CORPUS_FILE` (`dati/artusi.txt`), `CHUNK_DIMENSIONE`
+(`1200`), `CHUNK_OVERLAP` (`200`); il server di LM Studio è lo stesso dell'agente (`LM_BASE_URL`).
+
 ## Preparazione
 
 1. Ambiente virtuale e dipendenze (Python 3.14):
@@ -473,6 +535,10 @@ esposti, back-end dopo il database, nessuna credenziale nel file, proxy adatto a
 (marker `docker`: i quattro container veri, chat in streaming attraverso il proxy, traccia dello strumento nei log
 dell'agente, chat ancora presente dopo `down` e `up`).
 Le prove reali controllano che lo strumento abbia risposto, non solo che sia stato chiamato.
+Lezione 7: `test_rag_corpus.py` (790 ricette senza buchi, 23 capitoli, pulizia, chunking, ID stabili) e
+`test_rag_pipeline.py` (ingestion ripetibile, orfani, metadati della collezione, cambio di modello bloccato,
+ricerca con filtro, valutazione) con un embedder finto e Qdrant in memoria: passano con LM Studio e Qdrant spenti.
+Prova reale: `pytest -m qdrant` (ingestion completa due volte con lo stesso numero di punti, ricerca filtrata).
 
 ## Diagnosi
 

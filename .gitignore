@@ -3,3 +3,5 @@
 __pycache__/
 .pytest_cache/
 server_mcp.log
+# Lezione 7: corpus scaricato (Project Gutenberg n. 59047), da non versionare.
+dati/
